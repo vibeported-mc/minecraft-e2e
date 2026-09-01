@@ -101,6 +101,8 @@ internal object ClientNode {
             if (minecraft.level == null || minecraft.player == null) return@addListener
             if (!connected.compareAndSet(false, true)) return@addListener
 
+            // On the render thread, and the window exists by now, which is all moving it needs.
+            WindowLayout.apply(minecraft)
             Nodes.connect(self, host, port, server = null, client = minecraft)
         }
     }

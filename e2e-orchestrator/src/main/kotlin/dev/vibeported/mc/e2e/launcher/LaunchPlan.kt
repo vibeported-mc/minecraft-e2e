@@ -39,4 +39,9 @@ public data class LaunchPlan(
     public val callTimeoutSeconds: Long = 120,
     /** How long a teleport or a turn may take to show up on the client that was asked. */
     public val actionTimeoutSeconds: Long = 10,
+    /** Client window size. Minecraft's own default of 854x480 is too small to watch. */
+    public val clientWidth: Int = 1280,
+    public val clientHeight: Int = 720,
+    /** Whether each client moves its window so two of them do not land on top of each other. */
+    public val tileWindows: Boolean = true,
 )

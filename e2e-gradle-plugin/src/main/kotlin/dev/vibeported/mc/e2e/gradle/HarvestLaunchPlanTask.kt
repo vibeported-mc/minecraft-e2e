@@ -31,6 +31,9 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
     @get:Input abstract val testTimeoutSeconds: Property<Long>
     @get:Input abstract val callTimeoutSeconds: Property<Long>
     @get:Input abstract val actionTimeoutSeconds: Property<Long>
+    @get:Input abstract val clientWidth: Property<Int>
+    @get:Input abstract val clientHeight: Property<Int>
+    @get:Input abstract val tileWindows: Property<Boolean>
     @get:OutputFile abstract val planFile: RegularFileProperty
 
     init {
@@ -63,7 +66,10 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
                 append("\"startupTimeoutSeconds\":").append(startupTimeoutSeconds.get()).append(",")
                 append("\"testTimeoutSeconds\":").append(testTimeoutSeconds.get()).append(",")
                 append("\"callTimeoutSeconds\":").append(callTimeoutSeconds.get()).append(",")
-                append("\"actionTimeoutSeconds\":").append(actionTimeoutSeconds.get())
+                append("\"actionTimeoutSeconds\":").append(actionTimeoutSeconds.get()).append(",")
+                append("\"clientWidth\":").append(clientWidth.get()).append(",")
+                append("\"clientHeight\":").append(clientHeight.get()).append(",")
+                append("\"tileWindows\":").append(tileWindows.get())
                 append("}")
             }
         )

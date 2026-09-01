@@ -60,6 +60,18 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
     abstract val actionTimeoutSeconds: Property<Long>
 
     /**
+     * Client window size.
+     *
+     * Minecraft's own default is 854x480, which is too small to read an overlay on or to see what a
+     * test is doing, so the default here is larger rather than absent.
+     */
+    abstract val clientWidth: Property<Int>
+    abstract val clientHeight: Property<Int>
+
+    /** Whether each client moves its window so that two of them do not land on top of each other. */
+    abstract val tileWindows: Property<Boolean>
+
+    /**
      * The Java version the game runs on. Minecraft 26.2 needs 25, and resolution fails outright on
      * anything older, so this is not a preference so much as a fact about the version.
      */

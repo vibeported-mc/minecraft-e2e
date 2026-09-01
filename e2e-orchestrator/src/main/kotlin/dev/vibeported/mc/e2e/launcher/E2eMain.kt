@@ -196,7 +196,7 @@ public object E2eMain {
             val template = plan.clients.firstOrNull()
                 ?: error("The launch plan has no client run to start clients from")
 
-            clients.forEach { name ->
+            clients.forEachIndexed { index, name ->
                 println("e2e: starting client `$name`")
                 val gameDir = File(File(template.workingDir).parentFile, "e2eClient-$name")
                 seedClient(gameDir)
@@ -208,12 +208,16 @@ public object E2eMain {
                         // The client joins the server itself; the two never learn about each other
                         // any other way.
                         "-De2e.server.address=${plan.serverAddress}",
-                    ),
+                    ) + windowArgs(index),
                     logDir = logDir,
                     echo = ::println,
                     // The username is the client's name as far as a test is concerned: it is what
                     // waitForPlayer, teleport and lookAtPlayer look it up by on the server.
-                    extraProgramArgs = listOf("--username", name),
+                    extraProgramArgs = listOf(
+                        "--username", name,
+                        "--width", plan.clientWidth.toString(),
+                        "--height", plan.clientHeight.toString(),
+                    ),
                 )
                 processes += process
                 awaitNode(hub, NodeId.client(name), process)
@@ -266,6 +270,18 @@ public object E2eMain {
                     ).joinToString(System.lineSeparator(), postfix = System.lineSeparator())
                 )
             }
+        }
+
+        /**
+         * Which of the run's windows this client is.
+         *
+         * Only the ordinal travels: how big the monitor is, and so where the window can go, is
+         * knowable in the client and nowhere else.
+         */
+        private fun windowArgs(index: Int) = if (!plan.tileWindows) {
+            emptyList()
+        } else {
+            listOf("-De2e.window.index=$index", "-De2e.window.count=${clients.size}")
         }
 
         private fun nodeArgs() = listOf(
