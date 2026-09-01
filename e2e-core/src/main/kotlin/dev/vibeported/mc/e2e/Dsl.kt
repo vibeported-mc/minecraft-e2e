@@ -3,7 +3,6 @@
 package dev.vibeported.mc.e2e
 
 import dev.vibeported.mc.e2e.protocol.E2eAssertionError
-import kotlin.reflect.KProperty
 
 /**
  * Declares a group of tests.
@@ -74,27 +73,11 @@ public suspend fun E2eBlockScope.client(
 ): Unit = throw E2ePluginNotAppliedException("client { }")
 
 /**
- * Declares a value that outlives any one node: `var pos by shared<BlockPos>()`.
+ * Declares a value that outlives any one node: `val pos = shared<BlockPos>()`.
  *
- * The delegate exists to give the property its honest static type. It never runs -- the compiler
- * plugin replaces every read and write of the delegated property with a suspending call to the
- * orchestrator's authoritative store, which is what lets a value written on the server be read on
- * a client in a different process.
+ * The declaration only names the value and fixes its id; the test body it sits in never runs. Every
+ * mention of `target` inside a block is rewritten by the compiler plugin into a handle bound to that
+ * node, which is what lets a value written on the server be read on a client in another process.
  */
-public fun <T : Any> E2eScope.shared(): SharedDelegate<T> =
+public fun <T : Any> E2eScope.shared(): Shared<T> =
     throw E2ePluginNotAppliedException("shared<T>()")
-
-/** @see shared */
-public interface SharedDelegate<T : Any> {
-    public operator fun getValue(thisRef: Any?, property: KProperty<*>): T
-    public operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T)
-}
-
-/**
- * Fails the current test if [condition] is false.
- *
- * Inline, so a `shared` read inside the lambda is still a suspending call in the enclosing block.
- */
-public inline fun assertThat(message: String = "assertion failed", condition: () -> Boolean) {
-    if (!condition()) throw E2eAssertionError(message)
-}

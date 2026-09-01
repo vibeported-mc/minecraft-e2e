@@ -26,13 +26,21 @@ public data class InvokeBlock(
     public val target: NodeId,
 ) : Payload
 
-/** Read of a `shared` value against the orchestrator's authoritative store. */
+/**
+ * Read of a `shared` value against the orchestrator's authoritative store.
+ *
+ * [await] is what separates `get()` from `getOrNull()`: a waiting read parks on the orchestrator
+ * until something writes the value, so a test does not have to guess at when that will be.
+ */
 @Serializable
 public data class SharedGet(
     public val runId: String,
     public val id: SharedId,
     /** Fully qualified class name, used to pick the serializer on both ends. */
     public val valueType: String,
+    public val await: Boolean = true,
+    /** Null means bounded only by the test timeout. */
+    public val timeoutMillis: Long? = null,
 ) : Payload
 
 /** Write of a `shared` value. */

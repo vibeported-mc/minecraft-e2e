@@ -51,8 +51,7 @@ internal class E2eSymbols(private val pluginContext: IrPluginContext) {
     val noSuchBlockConstructor: IrConstructorSymbol = noSuchBlock.constructors.single()
 
     val dispatch: IrSimpleFunctionSymbol = e2eBlockScope.member("dispatch")
-    val sharedGet: IrSimpleFunctionSymbol = e2eBlockScope.member("sharedGet")
-    val sharedSet: IrSimpleFunctionSymbol = e2eBlockScope.member("sharedSet")
+    val sharedHandle: IrSimpleFunctionSymbol = e2eBlockScope.member("sharedHandle")
 
     /** The plugin-facing overloads: `suite(name, id, body)` and `e2e(name, id, driver)`. */
     val suiteWithId: IrSimpleFunctionSymbol =

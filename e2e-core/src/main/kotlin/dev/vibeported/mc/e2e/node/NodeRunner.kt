@@ -2,6 +2,7 @@ package dev.vibeported.mc.e2e.node
 
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.mc.McValueCodec
+import dev.vibeported.mc.e2e.mc.TickClock
 import dev.vibeported.mc.e2e.rpc.Event
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
 import dev.vibeported.mc.e2e.rpc.Request
@@ -37,6 +38,8 @@ public class NodeRunner(
      */
     private val blockDispatcher: CoroutineContext = EmptyCoroutineContext,
     private val codec: ValueCodec = McValueCodec(),
+    /** Ticked by the game, so a block can wait for one. Idle in a test with no game attached. */
+    public val tickClock: TickClock = TickClock(),
 ) {
     // Unbounded, and written with trySend, so log() can stay non-suspending for its callers.
     private val logs = Channel<Event>(Channel.UNLIMITED)
@@ -75,6 +78,7 @@ public class NodeRunner(
             server = server,
             client = client,
             codec = codec,
+            tickClock = tickClock,
             emitLog = { logs.trySend(it) },
             // Everything a block asks for goes to the orchestrator, including a nested client block
             // this node raised: it routes onward and hands back the result.

@@ -36,9 +36,6 @@ object E2eDiagnostics : KtDiagnosticsContainer() {
     /** A test body is a plan, not code: only shared declarations and blocks belong in it. */
     val E2E_TEST_BODY_NOT_DECLARATIVE: KtDiagnosticFactory0 by error0<KtElement>()
 
-    /** Reading a shared value is a suspending call, so it cannot happen in a lambda that is not inlined. */
-    val E2E_SHARED_IN_NESTED_LAMBDA: KtDiagnosticFactory0 by error0<KtElement>()
-
     val E2E_DUPLICATE_NAME: KtDiagnosticFactory1<String> by error1<KtElement, String>()
 
     override fun getRendererFactory(): BaseDiagnosticRendererFactory = E2eErrorMessages
@@ -66,8 +63,9 @@ object E2eErrorMessages : BaseDiagnosticRendererFactory() {
         )
         map.put(
             E2eDiagnostics.E2E_SHARED_MISPLACED,
-            "shared<T>() may only be used as `var x by shared<T>()` directly inside an e2e block, " +
-                "which is what gives the value one declaring scope and therefore one stable id.",
+            "shared<T>() may only initialise a local declared directly inside an e2e block, as " +
+                "`val pos = shared<BlockPos>()`, which is what gives the value one declaring scope " +
+                "and therefore one stable id.",
         )
         map.put(
             E2eDiagnostics.E2E_BLOCK_IN_NESTED_LAMBDA,
@@ -80,12 +78,6 @@ object E2eErrorMessages : BaseDiagnosticRendererFactory() {
                 "never executed: the compiler reads the blocks out of it as an ordered list of " +
                 "steps for the orchestrator, so there is nowhere for this statement to run. Move " +
                 "it inside a server or client block.",
-        )
-        map.put(
-            E2eDiagnostics.E2E_SHARED_IN_NESTED_LAMBDA,
-            "A shared value cannot be read inside this lambda, because reading one is a suspending " +
-                "call to the orchestrator and this lambda is not inlined into the block. Read it " +
-                "into a local in the block first, and use that local here.",
         )
         map.put(
             E2eDiagnostics.E2E_DUPLICATE_NAME,

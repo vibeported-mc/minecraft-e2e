@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrFile
-import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
+import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
@@ -91,18 +91,20 @@ internal class E2ePlanner(
         body.body?.acceptChildrenVoid(object : IrVisitorVoid() {
             override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
 
-            override fun visitLocalDelegatedProperty(declaration: IrLocalDelegatedProperty) {
-                val delegate = declaration.delegate?.initializer as? IrCall
-                if (delegate?.fqName() == E2eDsl.SHARED) {
+            override fun visitVariable(declaration: IrVariable) {
+                val initializer = declaration.initializer as? IrCall
+                if (initializer?.fqName() == E2eDsl.SHARED) {
                     val name = declaration.name.asString()
                     if (test.shared.any { it.name == name }) {
-                        report(delegate, "duplicate shared value `$name` in test `${test.name}`")
+                        report(initializer, "duplicate shared value `$name` in test `${test.name}`")
                     }
                     test.shared += SharedPlan(
                         id = "${test.id}#$name",
                         name = name,
-                        property = declaration,
-                        type = declaration.type,
+                        variable = declaration,
+                        // shared<T>() says T at the call site; the local is typed Shared<T>.
+                        type = initializer.typeArguments.firstOrNull()
+                            ?: error("e2e: shared() without a type argument at ${declaration.name}"),
                     )
                 }
                 declaration.acceptChildrenVoid(this)

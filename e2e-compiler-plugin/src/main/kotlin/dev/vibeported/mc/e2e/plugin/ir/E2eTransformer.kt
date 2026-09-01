@@ -31,6 +31,7 @@ import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.IrBuilderWithScope
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.impl.IrClassReferenceImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrCompositeImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrInstanceInitializerCallImpl
@@ -196,77 +197,48 @@ internal class E2eTransformer(
         val scope = method.parameters.single { it.kind == IrParameterKind.Regular }
         val test = plan.suites.flatMap { it.tests }.single { it.id == block.testId }
 
-        val sharedByAccessor = HashMap<IrSimpleFunctionSymbol, SharedPlan>()
-        test.shared.forEach { shared ->
-            shared.property.getter.symbol.let { sharedByAccessor[it] = shared }
-            shared.property.setter?.symbol?.let { sharedByAccessor[it] = shared }
-        }
+        val sharedByVariable = test.shared.associateBy { it.variable.symbol }
 
         method.body?.transformChildrenVoid(object : IrElementTransformerVoid() {
 
-            /** Deletes the `by shared<T>()` declaration; the reads and writes no longer need it. */
-            override fun visitLocalDelegatedProperty(
-                declaration: org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty,
-            ): IrStatement {
-                if (test.shared.none { it.property === declaration }) return super.visitLocalDelegatedProperty(declaration)
-                return IrCompositeImpl(
-                    declaration.startOffset,
-                    declaration.endOffset,
-                    context.irBuiltIns.unitType,
-                    null,
-                    emptyList(),
+            /**
+             * Every mention of a shared value becomes a handle bound to this node.
+             *
+             * The local it refers to was declared in the test body, which is never executed, so
+             * there is nothing here to read. Building the handle is a plain call, which is what
+             * lets a shared value be mentioned anywhere an expression is legal.
+             */
+            override fun visitGetValue(expression: IrGetValue): IrExpression {
+                val shared = sharedByVariable[expression.symbol] ?: return super.visitGetValue(expression)
+                val builder = DeclarationIrBuilder(
+                    context, method.symbol, expression.startOffset, expression.endOffset,
                 )
+                return sharedHandleCall(builder, scope, shared)
             }
 
             override fun visitCall(expression: IrCall): IrExpression {
-                val builder = DeclarationIrBuilder(context, method.symbol, expression.startOffset, expression.endOffset)
-
-                sharedByAccessor[expression.symbol]?.let { shared ->
-                    val isGetter = shared.property.getter.symbol == expression.symbol
-                    expression.transformChildrenVoid(this)
-                    return if (isGetter) {
-                        sharedGetCall(builder, scope, shared)
-                    } else {
-                        sharedSetCall(builder, scope, shared, expression.arguments.last()!!)
-                    }
-                }
-
                 val child = block.children.firstOrNull { it.call === expression }
-                if (child != null) return dispatchCall(builder, scope, child)
-
+                if (child != null) {
+                    val builder = DeclarationIrBuilder(
+                        context, method.symbol, expression.startOffset, expression.endOffset,
+                    )
+                    return dispatchCall(builder, scope, child)
+                }
                 return super.visitCall(expression)
             }
         })
     }
 
-    private fun sharedGetCall(
+    private fun sharedHandleCall(
         builder: IrBuilderWithScope,
         scope: IrValueParameter,
         shared: SharedPlan,
     ): IrExpression = with(builder) {
-        val read = irCall(symbols.sharedGet).apply {
+        irCall(symbols.sharedHandle).apply {
             arguments[0] = irGet(scope)
             arguments[1] = sharedId(builder, shared.id)
             arguments[2] = classReference(shared.type)
-        }
-        // sharedGet is typed Any? because the wire is; the cast puts the property type back.
-        org.jetbrains.kotlin.ir.expressions.impl.IrTypeOperatorCallImpl(
-            startOffset, endOffset, shared.type,
-            org.jetbrains.kotlin.ir.expressions.IrTypeOperator.CAST, shared.type, read,
-        )
-    }
-
-    private fun sharedSetCall(
-        builder: IrBuilderWithScope,
-        scope: IrValueParameter,
-        shared: SharedPlan,
-        value: IrExpression,
-    ): IrExpression = with(builder) {
-        irCall(symbols.sharedSet).apply {
-            arguments[0] = irGet(scope)
-            arguments[1] = sharedId(builder, shared.id)
-            arguments[2] = classReference(shared.type)
-            arguments[3] = value
+            typeArguments[0] = shared.type
         }
     }
 

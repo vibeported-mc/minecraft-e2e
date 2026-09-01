@@ -24,17 +24,17 @@ class TransformTest {
 
         val movement = suite("movement") {
             e2e("block moved") {
-                var count by shared<Int>()
+                val count = shared<Int>()
 
                 server {
-                    count = 7
+                    count.set(7)
                     client {
-                        assertThat("the client should see what the server wrote") { count == 7 }
+                        assertThat("the client should see what the server wrote") { count.get() == 7 }
                     }
                 }
 
                 client {
-                    assertThat("and still see it afterwards") { count == 7 }
+                    assertThat("and still see it afterwards") { count.get() == 7 }
                 }
             }
         }
@@ -97,8 +97,8 @@ class TransformTest {
         val before = E2eCompilation(File(workingDir, "before")).compile("Suite.kt" to suiteSource)
         val after = E2eCompilation(File(workingDir, "after")).compile(
             "Suite.kt" to suiteSource.replace(
-                "        client {\n            assertThat(\"and still see it afterwards\") { count == 7 }\n        }",
-                "        client {\n            assertThat(\"reworded entirely\") { count == 7 }\n            log(\"and an extra statement\")\n        }",
+                "        client {\n            assertThat(\"and still see it afterwards\") { count.get() == 7 }\n        }",
+                "        client {\n            assertThat(\"reworded entirely\") { count.get() == 7 }\n            log(\"and an extra statement\")\n        }",
             )
         )
         assertTrue(before.succeeded, before.messages)
@@ -155,10 +155,10 @@ class TransformTest {
 
                 val movement = suite("movement") {
                     e2e("wrong expectation") {
-                        var count by shared<Int>()
-                        server { count = 7 }
+                        val count = shared<Int>()
+                        server { count.set(7) }
                         client {
-                            assertThat("count should have been 8") { count == 8 }
+                            assertThat("count should have been 8") { count.get() == 8 }
                         }
                     }
                 }

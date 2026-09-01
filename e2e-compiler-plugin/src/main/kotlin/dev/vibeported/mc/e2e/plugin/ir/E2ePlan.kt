@@ -1,7 +1,7 @@
 package dev.vibeported.mc.e2e.plugin.ir
 
 import org.jetbrains.kotlin.ir.declarations.IrFile
-import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
+import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.types.IrType
@@ -17,7 +17,9 @@ internal enum class BlockRole { SERVER, CLIENT }
 internal class SharedPlan(
     val id: String,
     val name: String,
-    val property: IrLocalDelegatedProperty,
+    /** The local the declaration created. It never survives: every mention becomes a handle. */
+    val variable: IrVariable,
+    /** The `T` in `Shared<T>`, which is what actually crosses the wire. */
     val type: IrType,
 )
 

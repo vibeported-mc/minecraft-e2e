@@ -2,6 +2,8 @@ package dev.vibeported.mc.e2e.node
 
 import dev.vibeported.mc.e2e.protocol.BlockId
 import dev.vibeported.mc.e2e.BlockScope
+import dev.vibeported.mc.e2e.Shared
+import dev.vibeported.mc.e2e.mc.TickClock
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.protocol.SharedId
 import dev.vibeported.mc.e2e.rpc.Event
@@ -18,7 +20,9 @@ import net.minecraft.client.player.LocalPlayer
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
+import net.minecraft.world.level.Level
 import kotlin.reflect.KClass
+import kotlin.time.Duration
 
 /**
  * What a lifted block sees.
@@ -40,6 +44,7 @@ internal class NodeBlockScope(
     private val server: MinecraftServer?,
     private val client: Minecraft?,
     private val codec: ValueCodec,
+    private val tickClock: TickClock,
     private val emitLog: (Event) -> Unit,
     /** Sends a payload to the orchestrator, which relays and answers. */
     private val toOrchestrator: suspend (Payload) -> JsonElement?,
@@ -80,12 +85,58 @@ internal class NodeBlockScope(
         toOrchestrator(InvokeBlock(runId, block, target))
     }
 
-    override suspend fun sharedGet(id: SharedId, type: KClass<*>): Any? {
-        val encoded = toOrchestrator(SharedGet(runId, id, type.java.name)) ?: JsonNull
-        return codec.decode(type, encoded)
-    }
+    override val level: Level
+        get() = if (server != null) serverLevel else clientLevel
+            ?: error("`$currentBlock` asked for the level, but this client has not joined one")
 
-    override suspend fun sharedSet(id: SharedId, type: KClass<*>, value: Any?) {
-        toOrchestrator(SharedSet(runId, id, type.java.name, codec.encode(type, value)))
+    override val currentTick: Long get() = tickClock.current
+
+    override suspend fun awaitTicks(count: Int): Unit = tickClock.awaitTicks(count)
+
+    override fun <T : Any> sharedHandle(id: SharedId, type: KClass<T>): Shared<T> =
+        RemoteShared(id, type)
+
+    /**
+     * One shared value, seen from this node.
+     *
+     * Constructing it costs nothing and touches nothing, which is what lets the plugin emit it
+     * wherever a shared value is mentioned. Everything that actually crosses the wire is suspending,
+     * and the orchestrator is the only party holding a value.
+     */
+    private inner class RemoteShared<T : Any>(
+        override val id: SharedId,
+        private val type: KClass<T>,
+    ) : Shared<T> {
+
+        override suspend fun get(): T = read(waitForIt = true)
+            ?: error("e2e: `$id` resolved to null, which a shared value is never allowed to be")
+
+        override suspend fun getOrNull(): T? = read(waitForIt = false)
+
+        override suspend fun waitForSet(timeout: Duration?): T =
+            read(waitForIt = true, timeout = timeout)
+                ?: error("e2e: `$id` resolved to null, which a shared value is never allowed to be")
+
+        override suspend fun set(value: T) {
+            toOrchestrator(SharedSet(runId, id, type.java.name, codec.encode(type, value)))
+        }
+
+        private suspend fun read(waitForIt: Boolean, timeout: Duration? = null): T? {
+            val encoded = toOrchestrator(
+                SharedGet(
+                    runId = runId,
+                    id = id,
+                    valueType = type.java.name,
+                    await = waitForIt,
+                    timeoutMillis = timeout?.inWholeMilliseconds,
+                )
+            )
+            if (encoded == null || encoded is JsonNull) return null
+            // javaObjectType, not java: for Int::class the latter is primitive `int`, which
+            // Class.cast rejects outright.
+            return type.javaObjectType.cast(codec.decode(type, encoded))
+        }
+
+        override fun toString(): String = "Shared($id)"
     }
 }

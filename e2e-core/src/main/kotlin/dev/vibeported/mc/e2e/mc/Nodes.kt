@@ -17,6 +17,7 @@ import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.common.NeoForge
 import net.neoforged.neoforge.event.server.ServerStoppingEvent
 import net.neoforged.neoforge.event.server.ServerStartedEvent
+import net.neoforged.neoforge.event.tick.ServerTickEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.minutes
 
@@ -44,6 +45,15 @@ internal object Nodes {
         val loop: BlockableEventLoop<*> = server ?: client
             ?: error("A node needs either a server or a client to run blocks on")
 
+        // One listener for the whole node. Everything that waits on a tick shares this counter,
+        // rather than registering and unregistering a listener per wait.
+        val tickClock = TickClock()
+        if (server != null) {
+            NeoForge.EVENT_BUS.addListener<ServerTickEvent.Post> { tickClock.onTick() }
+        } else {
+            NeoForge.EVENT_BUS.addListener<ClientTickEvent.Post> { tickClock.onTick() }
+        }
+
         NodeRunner(
             id = self,
             peer = RpcPeer(transport, callTimeout = 10.minutes),
@@ -51,6 +61,7 @@ internal object Nodes {
             server = server,
             client = client,
             blockDispatcher = GameThreadDispatcher(loop),
+            tickClock = tickClock,
         ).start(nodeScope)
 
         E2eMod.LOG.info("e2e: {} connected to the orchestrator at {}:{}", self, host, port)

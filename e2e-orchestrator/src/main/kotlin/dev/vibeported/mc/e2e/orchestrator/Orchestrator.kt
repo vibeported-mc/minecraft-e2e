@@ -22,6 +22,7 @@ import dev.vibeported.mc.e2e.rpc.toRemoteFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.serialization.json.JsonElement
+import kotlin.time.Duration.Companion.milliseconds
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
@@ -50,6 +51,15 @@ public class Orchestrator(
     private val logs = CopyOnWriteArrayList<LogLine>()
     private val blocks = CopyOnWriteArrayList<BlockRecord>()
     private val runCounter = AtomicLong()
+
+    /**
+     * The read a test is currently parked on, if any.
+     *
+     * Recorded so a test that times out can say what it was waiting for. Without it, the most common
+     * failure -- a block that forgot to write a shared value -- reports only that time ran out.
+     */
+    @Volatile
+    private var waitingOn: SharedGet? = null
 
     public fun start(scope: CoroutineScope): Job {
         peer.onRequest = { request: Request -> route(request.payload) }
@@ -116,7 +126,16 @@ public class Orchestrator(
 
     /** Single entry point for every payload, whether it arrived over the wire or from [runTest]. */
     private suspend fun route(payload: Payload): JsonElement? = when (payload) {
-        is SharedGet -> shared.get(payload.runId, payload.id)
+        is SharedGet -> if (payload.await) {
+            waitingOn = payload
+            try {
+                shared.await(payload.runId, payload.id, payload.timeoutMillis?.milliseconds)
+            } finally {
+                waitingOn = null
+            }
+        } else {
+            shared.peek(payload.runId, payload.id)
+        }
         is SharedSet -> {
             shared.set(payload.runId, payload.id, payload.value)
             null

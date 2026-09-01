@@ -9,6 +9,7 @@ import net.minecraft.client.player.LocalPlayer
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
+import net.minecraft.world.level.Level
 import kotlin.reflect.KClass
 
 /** Restricts implicit receivers so an inner block cannot silently call an outer scope's members. */
@@ -36,11 +37,15 @@ public interface E2eBlockScope {
     /** Sends a lifted block to [target] and suspends until that node has finished running it. */
     public suspend fun dispatch(block: BlockId, target: NodeId)
 
-    /** Reads a `shared` value from the orchestrator's authoritative store. */
-    public suspend fun sharedGet(id: SharedId, type: KClass<*>): Any?
-
-    /** Writes a `shared` value into the orchestrator's authoritative store. */
-    public suspend fun sharedSet(id: SharedId, type: KClass<*>, value: Any?)
+    /**
+     * A handle on one `shared` value, bound to this node.
+     *
+     * Deliberately not suspending: the compiler plugin emits this wherever a shared value is
+     * mentioned, so it has to be legal everywhere a plain expression is -- inside a non-suspending
+     * lambda, or on the way into a helper function. Crossing the wire is what [Shared.get] and
+     * [Shared.set] are for.
+     */
+    public fun <T : Any> sharedHandle(id: SharedId, type: KClass<T>): Shared<T>
 }
 
 /**
@@ -52,8 +57,23 @@ public interface E2eBlockScope {
  */
 public interface E2eScope : E2eBlockScope
 
-/** Receiver of a block that runs inside a game process. */
-public interface NodeScope : E2eBlockScope
+/**
+ * Receiver of a block that runs inside a game process.
+ *
+ * Blocks run on the game loop, so the tick is the natural unit of waiting here: awaiting one hands
+ * the loop back and picks up exactly where the game next got a chance to change something.
+ */
+public interface NodeScope : E2eBlockScope {
+
+    /** This node's level. A [ServerLevel] on the server, a [ClientLevel] on a client. */
+    public val level: Level
+
+    /** How many ticks this node has seen. Only differences between readings mean anything. */
+    public val currentTick: Long
+
+    /** Suspends until [count] more ticks have gone by. */
+    public suspend fun awaitTicks(count: Int = 1)
+}
 
 /**
  * Receiver of a `server { }` block, which runs in the dedicated server process, **on the server

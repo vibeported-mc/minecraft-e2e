@@ -51,7 +51,6 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             E2eCallables.E2E -> {
                 checkConstantName(expression)
                 checkLambdaLiteral(expression)
-                checkDuplicateSharedNames(expression)
                 checkBodyIsDeclarative(expression)
             }
 
@@ -79,8 +78,8 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
 
         body.body?.statements?.forEach { statement ->
             val allowed = when (statement) {
-                // `var x by shared<T>()`
-                is FirProperty -> statement.delegate != null
+                // `val x = shared<BlockPos>()`
+                is FirProperty -> statement.initializer.isSharedCall()
                 // `server { }` / `client { }`
                 is FirFunctionCall ->
                     statement.toResolvedCallableSymbol()?.callableId in E2eCallables.BLOCKS
@@ -140,28 +139,6 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
     }
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
-    private fun checkDuplicateSharedNames(expression: FirFunctionCall) {
-        val body = (expression.argumentFor("body") as? FirAnonymousFunctionExpression)
-            ?.anonymousFunction ?: return
-
-        val seen = mutableSetOf<String>()
-        body.body?.accept(object : FirVisitorVoid() {
-            override fun visitElement(element: FirElement) = element.acceptChildren(this)
-
-            override fun visitProperty(property: FirProperty) {
-                val delegate = property.delegate as? FirFunctionCall
-                if (delegate?.toResolvedCallableSymbol()?.callableId == E2eCallables.SHARED) {
-                    val name = property.name.asString()
-                    if (!seen.add(name)) {
-                        reporter.reportOn(property.source, E2eDiagnostics.E2E_DUPLICATE_NAME, name)
-                    }
-                }
-                property.acceptChildren(this)
-            }
-        })
-    }
-
-    context(context: CheckerContext, reporter: DiagnosticReporter)
     private fun checkConstantName(expression: FirFunctionCall) {
         val name = expression.argumentFor("name") ?: return
         if (name !is FirLiteralExpression || name.value !is String) {
@@ -191,20 +168,9 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             ?: return
 
         val declaredInside = collectDeclaredSymbols(lambda)
-        val notInlined = collectNotInlinedLambdas(lambda)
 
         lambda.body?.accept(object : FirVisitorVoid() {
-            /** How many lambdas we are inside of that will not be inlined into this block. */
-            private var insideForeignLambda = 0
-
             override fun visitElement(element: FirElement) = element.acceptChildren(this)
-
-            override fun visitAnonymousFunction(anonymousFunction: FirAnonymousFunction) {
-                val foreign = anonymousFunction in notInlined
-                if (foreign) insideForeignLambda++
-                anonymousFunction.acceptChildren(this)
-                if (foreign) insideForeignLambda--
-            }
 
             override fun visitPropertyAccessExpression(propertyAccessExpression: FirPropertyAccessExpression) {
                 inspect(propertyAccessExpression, propertyAccessExpression.calleeReference.toResolvedVariableSymbol())
@@ -222,12 +188,10 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             private fun inspect(at: FirElement, symbol: FirVariableSymbol<*>?) {
                 if (symbol == null || symbol in declaredInside) return
                 if (!symbol.isLocalToEnclosingCode()) return
-                if (symbol.isSharedDelegate()) {
-                    if (insideForeignLambda > 0) {
-                        reporter.reportOn(at.source, E2eDiagnostics.E2E_SHARED_IN_NESTED_LAMBDA)
-                    }
-                    return
-                }
+                // A shared value is a handle: mentioning it is a plain expression, so it may be
+                // captured anywhere. Whether reading it is legal here is a question about suspend
+                // functions, which the compiler already answers better than this checker could.
+                if (symbol.isSharedValue()) return
                 reporter.reportOn(
                     at.source,
                     E2eDiagnostics.E2E_ILLEGAL_CAPTURE,
@@ -235,39 +199,6 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
                 )
             }
         })
-    }
-
-    /**
-     * The lambdas inside [lambda] that will not be inlined into it.
-     *
-     * Reading a shared value compiles to a suspending call, which is fine in a lambda that is
-     * inlined here and impossible in one that becomes its own function. Inlining is decided by the
-     * callee and the parameter it was passed to, not by anything on the lambda itself.
-     *
-     * A nested `server`/`client` body is not counted: it is a block in its own right, lifted
-     * separately and checked on its own pass, so a shared read in one is perfectly legal.
-     */
-    private fun collectNotInlinedLambdas(lambda: FirAnonymousFunction): Set<FirAnonymousFunction> {
-        val notInlined = mutableSetOf<FirAnonymousFunction>()
-        lambda.body?.accept(object : FirVisitorVoid() {
-            override fun visitElement(element: FirElement) = element.acceptChildren(this)
-
-            override fun visitFunctionCall(functionCall: FirFunctionCall) {
-                val callee = functionCall.toResolvedCallableSymbol()
-                val isBlock = callee?.callableId in E2eCallables.BLOCK_BODY_OWNERS
-                val calleeIsInline = (callee as? FirNamedFunctionSymbol)?.resolvedStatus?.isInline == true
-
-                functionCall.resolvedArgumentMapping?.forEach { (argument, parameter) ->
-                    val nested = (argument as? FirAnonymousFunctionExpression)?.anonymousFunction
-                        ?: return@forEach
-                    if (isBlock) return@forEach
-                    val inlined = calleeIsInline && !parameter.isNoinline && !parameter.isCrossinline
-                    if (!inlined) notInlined += nested
-                }
-                functionCall.acceptChildren(this)
-            }
-        })
-        return notInlined
     }
 
     /** Every value declared within [lambda], including inside nested lambdas of its own. */
@@ -290,11 +221,8 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
         else -> false
     }
 
-    private fun FirVariableSymbol<*>.isSharedDelegate(): Boolean {
-        val property = fir as? FirProperty ?: return false
-        val delegate = property.delegate as? FirFunctionCall ?: return false
-        return delegate.toResolvedCallableSymbol()?.callableId == E2eCallables.SHARED
-    }
+    private fun FirVariableSymbol<*>.isSharedValue(): Boolean =
+        (fir as? FirProperty)?.initializer.isSharedCall()
 
 }
 
@@ -305,9 +233,9 @@ object E2eSharedPlacementChecker : FirExpressionChecker<FirFunctionCall>(MppChec
     override fun check(expression: FirFunctionCall) {
         if (expression.toResolvedCallableSymbol()?.callableId != E2eCallables.SHARED) return
 
-        // Legal only as the delegate of a property: `var pos by shared<BlockPos>()`.
+        // Legal only as the initialiser of a local: `val pos = shared<BlockPos>()`.
         val owner = context.containingElements.lastOrNull { it is FirProperty } as? FirProperty
-        if (owner == null || owner.delegate !== expression) {
+        if (owner == null || owner.initializer !== expression) {
             reporter.reportOn(expression.source, E2eDiagnostics.E2E_SHARED_MISPLACED)
         }
     }
@@ -329,6 +257,10 @@ internal object E2eCallables {
     /** The two calls that are a block. */
     val BLOCKS: Set<CallableId> = setOf(SERVER, CLIENT)
 }
+
+/** Whether an expression is the `shared<T>()` call that declares a shared value. */
+internal fun FirExpression?.isSharedCall(): Boolean =
+    (this as? FirFunctionCall)?.toResolvedCallableSymbol()?.callableId == E2eCallables.SHARED
 
 internal fun FirFunctionCall.argumentFor(parameterName: String): FirExpression? =
     resolvedArgumentMapping?.entries?.firstOrNull { it.value.name.asString() == parameterName }?.key

@@ -82,12 +82,12 @@ class DiagnosticsTest {
             """
             val s = suite("s") {
                 e2e("t") {
-                    var pos by shared<BlockPos>()
+                    val pos = shared<BlockPos>()
                     server {
-                        pos = BlockPos(1, 2, 3)
+                        pos.set(BlockPos(1, 2, 3))
                     }
                     client {
-                        assertThat { pos.x == 1 }
+                        assertThat { pos.get().x == 1 }
                     }
                 }
             }
@@ -142,12 +142,12 @@ class DiagnosticsTest {
     }
 
     @Test
-    fun `shared must be a delegate`() {
+    fun `shared must initialise a local in the test body`() {
         val result = compile(
             """
             val s = suite("s") {
                 e2e("t") {
-                    val pos = shared<BlockPos>()
+                    shared<BlockPos>()
                     server { log("x") }
                 }
             }
@@ -155,7 +155,7 @@ class DiagnosticsTest {
         )
 
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
-        assertTrue(result.messages.contains("may only be used as"), result.messages)
+        assertTrue(result.messages.contains("may only initialise a local"), result.messages)
     }
 
     @Test
@@ -243,44 +243,29 @@ class DiagnosticsTest {
         assertTrue(result.messages.contains("'same' is declared twice"), result.messages)
     }
 
+    /**
+     * The whole reason shared values are handles: mentioning one is an ordinary expression, so it
+     * goes wherever an expression goes, including a lambda that will never be inlined.
+     */
     @Test
-    fun `two shared values in one test may not share a name`() {
+    fun `a shared handle may be captured by a lambda that is not inlined`() {
         val result = compile(
             """
-            val s = suite("s") {
-                e2e("t") {
-                    var pos by shared<BlockPos>()
-                    var pos2 by shared<BlockPos>()
-                    server { pos = BlockPos(1, 1, 1) }
-                }
-            }
-            """.trimIndent().replace("pos2", "pos")
-        )
-
-        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
-        assertTrue(result.messages.contains("declared twice"), result.messages)
-    }
-
-    @Test
-    fun `a shared read inside a lambda that is not inlined is rejected`() {
-        val result = compile(
-            """
-            fun runLater(action: () -> Int): Int = action()
+            fun runLater(action: () -> String): String = action()
 
             val s = suite("s") {
                 e2e("t") {
-                    var pos by shared<BlockPos>()
+                    val pos = shared<BlockPos>()
                     server {
-                        pos = BlockPos(1, 2, 3)
-                        runLater { pos.x }
+                        pos.set(BlockPos(1, 2, 3))
+                        log(runLater { pos.id.value })
                     }
                 }
             }
             """.trimIndent()
         )
 
-        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
-        assertTrue(result.messages.contains("Read it into a local in the block first"), result.messages)
+        assertTrue(result.succeeded, result.messages)
     }
 
     @Test
@@ -289,10 +274,10 @@ class DiagnosticsTest {
             """
             val s = suite("s") {
                 e2e("t") {
-                    var pos by shared<BlockPos>()
+                    val pos = shared<BlockPos>()
                     server {
-                        pos = BlockPos(1, 2, 3)
-                        assertThat { pos.x == 1 }
+                        pos.set(BlockPos(1, 2, 3))
+                        assertThat { pos.get().x == 1 }
                     }
                 }
             }
@@ -325,9 +310,9 @@ class DiagnosticsTest {
             """
             val s = suite("s") {
                 e2e("t") {
-                    var pos by shared<BlockPos>()
-                    server { pos = BlockPos(1, 2, 3) }
-                    client { assertThat { pos.x == 1 } }
+                    val pos = shared<BlockPos>()
+                    server { pos.set(BlockPos(1, 2, 3)) }
+                    client { assertThat { pos.get().x == 1 } }
                 }
             }
             """.trimIndent()
