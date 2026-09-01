@@ -52,6 +52,55 @@ public data class SharedSet(
     public val value: JsonElement,
 ) : Payload
 
+/**
+ * Drives a test player. Always handled by the server, which is the only side that can actually move
+ * one -- a client that moved itself would be corrected on the next tick.
+ */
+@Serializable
+public data class ControlPlayer(
+    public val runId: String,
+    public val client: String,
+    public val action: PlayerAction,
+) : Payload
+
+@Serializable
+public sealed interface PlayerAction {
+    @Serializable
+    public data class Teleport(
+        public val x: Double,
+        public val y: Double,
+        public val z: Double,
+        public val flying: Boolean,
+    ) : PlayerAction
+
+    @Serializable
+    public data class LookAt(public val x: Double, public val y: Double, public val z: Double) : PlayerAction
+}
+
+/**
+ * Asks a client whether its own player has caught up yet.
+ *
+ * The counterpart to [ControlPlayer], and the reason moving a player is not fire-and-forget. The
+ * server sets its own copy of a position the instant it teleports, so asking the server proves
+ * nothing; only the client can say whether it has applied the move.
+ */
+@Serializable
+public data class AwaitPlayer(
+    public val runId: String,
+    public val client: String,
+    public val expect: PlayerExpectation,
+    public val timeoutTicks: Int,
+) : Payload
+
+@Serializable
+public sealed interface PlayerExpectation {
+    @Serializable
+    public data class AtBlock(public val x: Int, public val y: Int, public val z: Int) : PlayerExpectation
+
+    @Serializable
+    public data class Facing(public val x: Double, public val y: Double, public val z: Double) : PlayerExpectation
+}
+
 /** Asks the receiving peer to cancel an in-flight call it is running for us. */
 @Serializable
 public data class Cancel(public val callId: Long) : Payload

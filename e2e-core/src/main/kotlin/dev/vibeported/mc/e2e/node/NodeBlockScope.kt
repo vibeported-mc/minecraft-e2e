@@ -4,9 +4,16 @@ import dev.vibeported.mc.e2e.protocol.BlockId
 import dev.vibeported.mc.e2e.BlockScope
 import dev.vibeported.mc.e2e.Shared
 import dev.vibeported.mc.e2e.mc.TickClock
+import dev.vibeported.mc.e2e.mc.applyPlayerAction
+import dev.vibeported.mc.e2e.mc.awaitPlayerState
+import dev.vibeported.mc.e2e.protocol.E2eAssertionError
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.protocol.SharedId
+import dev.vibeported.mc.e2e.rpc.AwaitPlayer
+import dev.vibeported.mc.e2e.rpc.ControlPlayer
 import dev.vibeported.mc.e2e.rpc.Event
+import dev.vibeported.mc.e2e.rpc.PlayerAction
+import dev.vibeported.mc.e2e.rpc.PlayerExpectation
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
 import dev.vibeported.mc.e2e.rpc.Payload
 import dev.vibeported.mc.e2e.rpc.SharedGet
@@ -14,13 +21,17 @@ import dev.vibeported.mc.e2e.rpc.SharedSet
 import dev.vibeported.mc.e2e.rpc.ValueCodec
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import net.minecraft.client.Minecraft
+import net.minecraft.core.BlockPos
 import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.level.Level
+import net.minecraft.world.phys.Vec3
 import kotlin.reflect.KClass
 import kotlin.time.Duration
 
@@ -93,6 +104,50 @@ internal class NodeBlockScope(
 
     override suspend fun awaitTicks(count: Int): Unit = tickClock.awaitTicks(count)
 
+    override suspend fun teleport(client: String, pos: BlockPos, flying: Boolean) {
+        val centre = Vec3.atBottomCenterOf(pos)
+        control(client, PlayerAction.Teleport(centre.x, centre.y, centre.z, flying))
+        confirm(client, PlayerExpectation.AtBlock(pos.x, pos.y, pos.z)) { seen ->
+            "teleport to $pos never took effect for client `$client`; $seen"
+        }
+    }
+
+    override suspend fun lookAt(client: String, pos: BlockPos) {
+        val centre = Vec3.atCenterOf(pos)
+        control(client, PlayerAction.LookAt(centre.x, centre.y, centre.z))
+        confirm(client, PlayerExpectation.Facing(centre.x, centre.y, centre.z)) { seen ->
+            "lookAt $pos never took effect for client `$client`; $seen"
+        }
+    }
+
+    /** Applies here if this is the server, and otherwise asks the orchestrator to relay it there. */
+    private suspend fun control(client: String, action: PlayerAction) {
+        val local = server
+        if (local != null) local.applyPlayerAction(client, action)
+        else toOrchestrator(ControlPlayer(runId, client, action))
+    }
+
+    /**
+     * Asks the named client whether it has caught up, answering locally when that client is us.
+     *
+     * Always the client and never the server: the server changed its own copy the moment it acted,
+     * so it would agree to anything.
+     */
+    private suspend fun confirm(
+        client: String,
+        expect: PlayerExpectation,
+        describe: (String) -> String,
+    ) {
+        val here = this.client
+        val seen = if (here != null) {
+            awaitPlayerState(here, tickClock, expect, ACTION_TIMEOUT_TICKS)
+        } else {
+            (toOrchestrator(AwaitPlayer(runId, client, expect, ACTION_TIMEOUT_TICKS)) as? JsonPrimitive)
+                ?.contentOrNull
+        }
+        if (seen != null) throw E2eAssertionError(describe(seen))
+    }
+
     override fun <T : Any> sharedHandle(id: SharedId, type: KClass<T>): Shared<T> =
         RemoteShared(id, type)
 
@@ -138,5 +193,10 @@ internal class NodeBlockScope(
         }
 
         override fun toString(): String = "Shared($id)"
+    }
+
+    private companion object {
+        /** 10 seconds at 20 ticks a second, far longer than a loopback round trip needs. */
+        const val ACTION_TIMEOUT_TICKS = 200
     }
 }

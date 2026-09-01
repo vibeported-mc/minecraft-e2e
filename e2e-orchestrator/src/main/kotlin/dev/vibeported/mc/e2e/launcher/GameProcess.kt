@@ -34,6 +34,7 @@ public class GameProcess(
             extraJvmArgs: List<String>,
             logDir: File,
             echo: (String) -> Unit,
+            extraProgramArgs: List<String> = emptyList(),
         ): GameProcess {
             val workingDir = File(spec.workingDir).apply { mkdirs() }
             logDir.mkdirs()
@@ -60,6 +61,7 @@ public class GameProcess(
                 if (spec.classpath.isNotEmpty()) add("@" + classpathFile.absolutePath)
                 add(spec.mainClass)
                 addAll(spec.programArgs.map(::normalizeArgFileReference))
+                addAll(extraProgramArgs)
             }
 
             File(logDir, "${spec.name}.command.txt").writeText(command.joinToString("\n"))

@@ -3,7 +3,11 @@ package dev.vibeported.mc.e2e.node
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.mc.McValueCodec
 import dev.vibeported.mc.e2e.mc.TickClock
+import dev.vibeported.mc.e2e.mc.applyPlayerAction
+import dev.vibeported.mc.e2e.mc.awaitPlayerState
 import dev.vibeported.mc.e2e.rpc.Event
+import dev.vibeported.mc.e2e.rpc.AwaitPlayer
+import dev.vibeported.mc.e2e.rpc.ControlPlayer
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
 import dev.vibeported.mc.e2e.rpc.Request
 import dev.vibeported.mc.e2e.rpc.RpcPeer
@@ -14,6 +18,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import net.minecraft.client.Minecraft
@@ -64,6 +69,20 @@ public class NodeRunner(
         is InvokeBlock -> {
             runBlock(payload)
             null
+        }
+
+        // Only the server can move a player, so this arrives here when a client block asked for it.
+        is ControlPlayer -> withContext(blockDispatcher) {
+            val server = server ?: error("Node $id was asked to move a player but is not the server")
+            server.applyPlayerAction(payload.client, payload.action)
+            null
+        }
+
+        // And only a client can say whether it has caught up.
+        is AwaitPlayer -> withContext(blockDispatcher) {
+            val client = client ?: error("Node $id was asked about its player but is not a client")
+            awaitPlayerState(client, tickClock, payload.expect, payload.timeoutTicks)
+                ?.let { JsonPrimitive(it) }
         }
 
         else -> error("Node $id has no handler for $payload")

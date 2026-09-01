@@ -193,6 +193,9 @@ public object E2eMain {
                     ),
                     logDir = logDir,
                     echo = ::println,
+                    // The username is the client's name as far as a test is concerned: it is what
+                    // waitForPlayer and teleport look it up by on the server.
+                    extraProgramArgs = listOf("--username", clientName(clientIndex)),
                 )
                 processes += client
                 awaitNode(hub, NodeId.client(clientIndex), client)
@@ -212,6 +215,9 @@ public object E2eMain {
             processes.forEach { it.stop() }
             processes.clear()
         }
+
+        /** Names are not yet carried through the manifest, so the one client is the default one. */
+        private fun clientName(index: Int): String = if (index == 0) "default" else "client$index"
 
         private fun nodeArgs() = listOf(
             "-De2e.orchestrator.host=127.0.0.1",

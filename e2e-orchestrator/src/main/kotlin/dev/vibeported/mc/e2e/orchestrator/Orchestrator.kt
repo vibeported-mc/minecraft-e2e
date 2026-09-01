@@ -9,7 +9,9 @@ import dev.vibeported.mc.e2e.report.LogLine
 import dev.vibeported.mc.e2e.report.Outcome
 import dev.vibeported.mc.e2e.report.RunReport
 import dev.vibeported.mc.e2e.report.TestReport
+import dev.vibeported.mc.e2e.rpc.AwaitPlayer
 import dev.vibeported.mc.e2e.rpc.Cancel
+import dev.vibeported.mc.e2e.rpc.ControlPlayer
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
 import dev.vibeported.mc.e2e.rpc.Payload
 import dev.vibeported.mc.e2e.rpc.RemoteFailure
@@ -142,8 +144,22 @@ public class Orchestrator(
         }
 
         is InvokeBlock -> invoke(payload)
+
+        // Relayed rather than acted on: this process has no game in it. Moving a player is the
+        // server's job, and only a client can confirm it has caught up.
+        is ControlPlayer -> peer.call(NodeId.SERVER, payload)
+        is AwaitPlayer -> peer.call(clientNode(payload.client), payload)
+
         is Cancel -> null
     }
+
+    /**
+     * The node running a named client.
+     *
+     * Names are not yet carried on [NodeId], so the single client is index 0 for now. Everything
+     * above this point already speaks in names, so widening it is a change here and nowhere else.
+     */
+    private fun clientNode(name: String): NodeId = NodeId.client(0)
 
     private suspend fun invoke(payload: InvokeBlock): JsonElement? {
         val startedAt = System.currentTimeMillis()

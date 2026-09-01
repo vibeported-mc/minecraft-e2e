@@ -4,6 +4,7 @@ import dev.vibeported.mc.e2e.protocol.BlockId
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.protocol.SharedId
 import net.minecraft.client.Minecraft
+import net.minecraft.core.BlockPos
 import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.server.MinecraftServer
@@ -73,7 +74,31 @@ public interface NodeScope : E2eBlockScope {
 
     /** Suspends until [count] more ticks have gone by. */
     public suspend fun awaitTicks(count: Int = 1)
+
+    /**
+     * Moves a player, and does not return until that client has actually arrived.
+     *
+     * Only the server can move a player, so a call from a client block is routed there and back.
+     * Waiting for the client to confirm is the point: the server sets its own copy of the position
+     * the instant it teleports, so a call that returned then would let the next line run against a
+     * client that has not moved yet.
+     */
+    public suspend fun teleport(
+        @MinecraftClientName client: String = DEFAULT_CLIENT,
+        pos: BlockPos,
+        flying: Boolean = false,
+    )
+
+    /** Turns a player to face [pos], returning once that client is looking at it. @see teleport */
+    public suspend fun lookAt(@MinecraftClientName client: String = DEFAULT_CLIENT, pos: BlockPos)
 }
+
+/** @see NodeScope.teleport */
+public suspend fun NodeScope.teleport(pos: BlockPos, flying: Boolean = false): Unit =
+    teleport(DEFAULT_CLIENT, pos, flying)
+
+/** @see NodeScope.lookAt */
+public suspend fun NodeScope.lookAt(pos: BlockPos): Unit = lookAt(DEFAULT_CLIENT, pos)
 
 /**
  * Receiver of a `server { }` block, which runs in the dedicated server process, **on the server
