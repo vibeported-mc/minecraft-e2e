@@ -10,20 +10,18 @@ val blocks = suite("blocks") {
         var target by shared<BlockPos>()
 
         server {
-            val placed = onServer {
-                val player = playerList.players.first()
-                val front = player.blockPosition().relative(player.direction, 2)
-                overworld().setBlockAndUpdate(front, Blocks.GOLD_BLOCK.defaultBlockState())
-                front
-            }
-            target = placed
-            log("placed a gold block at $placed")
+            val player = serverPlayer ?: error("nobody had joined the server")
+            val front = player.blockPosition().relative(player.direction, 2)
+            serverLevel.setBlockAndUpdate(front, Blocks.GOLD_BLOCK.defaultBlockState())
+
+            target = front
+            log("placed a gold block at $front")
         }
 
         client {
             val expected = target
             delay(3.seconds)
-            val seen = onClient { level?.getBlockState(expected)?.block }
+            val seen = clientLevel?.getBlockState(expected)?.block
             assertThat("the client should see the gold block") { seen == Blocks.GOLD_BLOCK }
         }
     }
@@ -33,21 +31,64 @@ val blocks = suite("blocks") {
 That test passes today against Minecraft 26.2 / NeoForge 26.2.0.69:
 
 ```
-PASS blocks > a block placed in front of the player shows up on the client  (8107 ms)
+PASS blocks > a block placed in front of the player shows up on the client  (8108 ms)
     log:
-      [server]    placed a gold block at BlockPos{x=-8, y=-60, z=-5}
-      [client[0]] the client sees Block{minecraft:gold_block} at BlockPos{x=-8, y=-60, z=-5}
+      [server]    placed a gold block at BlockPos{x=9, y=-60, z=-1}
+      [client[0]] the client sees Block{minecraft:gold_block} at BlockPos{x=9, y=-60, z=-1}
 ```
 
-## Running it
+## Setting it up
+
+The whole of a consuming build:
+
+```kotlin
+plugins {
+    id("dev.vibeported.mc.e2e") version "0.1.0"
+}
+
+mcE2E {
+    neoForge {                       // ModDevGradle's real NeoForgeExtension
+        version = "26.2.0.69"
+        mods { create("mymod") { sourceSet(sourceSets.main.get()) } }
+    }
+    modId = "mymod"
+}
+```
+
+Write suites in `src/e2eTest/kotlin`, then:
 
 ```sh
-./gradlew :e2e-mc:runE2e
+./gradlew runE2eTests
 ```
 
-That launches a dedicated server, launches a client which joins it, runs every suite, prints a
-report and writes `e2e-mc/build/reports/e2e/report.json`. Each game process's console is captured
-under `build/reports/e2e/logs/`, alongside the exact command used to start it.
+That launches a dedicated server, launches a client which joins it, runs every suite, prints a report
+and writes `build/reports/e2e/report.json`. Each game process's console is captured under
+`build/reports/e2e/logs/`, alongside the exact command used to start it.
+
+The plugin applies Kotlin, serialization and ModDevGradle; creates the `e2eTest` source set and gives
+it Minecraft; generates that mod's `neoforge.mods.toml`; applies the compiler plugin to it; registers
+the two runs and seeds their directories. `neoForge { }` is ModDevGradle's own extension rather than
+a wrapper, so anything the plugin has not thought to expose is still reachable, and nothing here has
+to be kept in step with ModDevGradle as it changes.
+
+## A test is a plan, not code
+
+A test body may contain **only** shared declarations and `server`/`client` calls. Anything else is a
+compile error, because there is nowhere for it to run:
+
+```kotlin
+e2e("...") {
+    var target by shared<BlockPos>()   // allowed
+    server { … }                       // allowed
+    client { … }                       // allowed
+    println("hello")                   // compile error
+}
+```
+
+The compiler reads the blocks out as an ordered list of steps and throws the body away. So the
+orchestrator has nothing to execute — it walks the list, telling each node which block to run. That
+is what makes "the orchestrator needs no Minecraft on its classpath" true by construction, and it is
+why a crashed server cannot take the thing coordinating the test down with it.
 
 ## How a block gets to the other process
 
@@ -59,13 +100,13 @@ So a K2 compiler plugin lifts every block body out of its closure into a generat
 keyed by a stable structural id, and rewrites `shared` reads and writes into RPC:
 
 ```kotlin
-// at the call site, in the test driver:
+// at the call site:
 scope.dispatch(BlockId("…/server[0]"), NodeId(SERVER, 0))
 
 // and, in a generated object beside the file facade:
 internal object E2eBlocks_BlocksKt : E2eBlockTable {
     override suspend fun invoke(id: String, scope: BlockScope): Any? {
-        if (id == "…/server[0]") return b1_server_0_(scope)
+        if (id == "…/server[0]") return b0_server_0_(scope)
         …
     }
 }
@@ -75,36 +116,49 @@ The lambda is never serialized; only its id travels. The body is *moved* rather 
 function the frontend already built for the lambda is re-parented into the table — so every symbol
 inside it stays valid, and it stops being a closure because it is no longer nested in one.
 
+## Blocks run on the game thread
+
+A block body is dispatched onto its process's event loop, so **every Minecraft call in it is safe
+with no wrapper**. Awaiting inside one — a `shared` value, a nested `client { }`, a `delay` — releases
+the loop, so the game keeps ticking and the block resumes back on it.
+
+Only block bodies go on the loop. Sockets, the RPC peer and the log pump stay on IO and Default, so a
+slow tick cannot delay the machinery that is measuring it.
+
+Two consequences worth knowing:
+
+- **Every suspension point costs up to a tick**, since resuming means queueing a task the loop picks
+  up on its next pass. A block doing many round trips is slower than one that batches its work.
+- **Blocking the thread blocks the game.** `Thread.sleep` or a busy-wait inside a block stalls the
+  server or freezes the client. `delay` is the one to reach for.
+
 ## Who talks to whom
 
 ```
         orchestrator (plain JVM, no Minecraft)
-        ├── TCP ──> dedicated server process   (mod e2e + e2e_tests)
-        └── TCP ──> client process             (mod e2e + e2e_tests)
+        ├── TCP ──> dedicated server process   (mods: e2e, <yourmod>_e2e)
+        └── TCP ──> client process             (mods: e2e, <yourmod>_e2e)
 ```
 
-The two game processes never open a socket to each other. A `client { }` raised inside a
-`server { }` goes server → orchestrator → client and back, which is what gives one report a single
-ordering over both, and what makes the relay the only thing that needs replacing to add more clients.
+The two game processes never open a socket to each other. A `client { }` raised inside a `server { }`
+goes server → orchestrator → client and back, which is what gives one report a single ordering over
+both.
 
-The orchestrator runs no test code: the lifted bodies live in a mod jar compiled against Minecraft
-and it has no game on its classpath. Even a test's driver is dispatched to the server node. It plans
-the run entirely from `META-INF/e2e/index.json`, which the compiler plugin wrote.
+If a game process dies mid-run, the orchestrator notices within a fraction of a second rather than
+waiting out the call timeout, marks that test ERROR with the exit code and log path, restarts both
+processes and carries on. **A restart resets the world**, so a suite whose later tests lean on what
+earlier ones built will behave differently after one. Three crashes in a row abandons the run.
 
 ## Keeping the sides apart
 
 `server { }` has a `ServerScope` receiver and `client { }` a `ClientScope`. The Minecraft accessors
-hang off those types separately, so a server block cannot *name* a client-side value — the split is
-enforced by the type system, not by convention:
+are members of those types separately, so a server block cannot *name* a client-side value — the
+split is enforced by the type system, not by convention:
 
 | In a `server { }` | In a `client { }` |
 | --- | --- |
-| `server: MinecraftServer` | `minecraft: Minecraft` |
-| `onServer { }`, `overworld()`, `firstPlayer()` | `onClient { }`, `clientLevel()`, `localPlayer()` |
-
-Everything touching the world goes through `onServer`/`onClient`, which hop to the game thread: a
-block body runs on a coroutine so it can suspend on the orchestrator, and is therefore never on the
-game thread itself.
+| `minecraftServer`, `serverLevel` | `minecraft`, `clientLevel` |
+| `serverPlayer`, `serverPlayers` | `clientPlayer`, `clientIndex` |
 
 ## The rules the compiler enforces
 
@@ -112,6 +166,7 @@ These are FIR checkers, so they appear under the cursor in the IDE as you type, 
 
 | Rule | Why |
 | --- | --- |
+| A test body holds only shared declarations and blocks | The body is never executed, so anything else would silently not run |
 | A block may not reference an enclosing local unless it is `shared` | That local does not exist in the process the block runs in |
 | A shared value may not be read inside a lambda that is not inlined | Reading one is a suspending call, impossible in a lambda compiled to its own function |
 | A block body must be a lambda written in place | A function reference has no stable identity for the table |
@@ -131,57 +186,43 @@ only authoritative copy.
 Minecraft types have no `@Serializable`, but they do have Mojang codecs. `McValueCodec` encodes them
 with the game's own `Codec` into NBT, writes that to bytes, and carries the bytes as a string inside
 the same kotlinx-serialized envelope as everything else. `BlockPos`, `BlockState` and `ItemStack` are
-registered; anything else falls through to plain kotlinx serialization, which is what keeps
-`shared<Int>()` working.
+registered; anything else falls through to plain kotlinx serialization, which keeps `shared<Int>()`
+working.
 
 ## Stable ids
 
 ```
 …BlocksKt:blocks                                    suite
 …BlocksKt:blocks/a block moved                      test
-…BlocksKt:blocks/a block moved/driver               runs on the server
-…BlocksKt:blocks/a block moved/server[0]
+…BlocksKt:blocks/a block moved/server[0]            a step
 …BlocksKt:blocks/a block moved/server[0]/client[0]  a client block raised by the server
 …BlocksKt:blocks/a block moved#target               a shared value
 ```
 
-Ordinals come from declaration order within the enclosing block, so reformatting a file or editing an
-unrelated test leaves every id alone. Renaming a suite or test *does* change its ids: the price of
-ids a person can read. `server(id = "…")` pins one when that matters.
+Ordinals come from declaration order, so reformatting a file or editing an unrelated test leaves
+every id alone. Renaming a suite or test *does* change its ids: the price of ids a person can read.
+`server(id = "…")` pins one when that matters.
 
 ## Modules
 
 | Module | What it is |
 | --- | --- |
-| `e2e-api` | The DSL and the contracts the generated code calls. No Minecraft, so its tests stay fast |
+| `e2e-protocol` | The wire: ids, index, envelopes, transport, RPC. No Minecraft, because the orchestrator has none |
+| `e2e-core` | The framework mod: the DSL, the Minecraft-typed scopes, codecs, node runner |
+| `e2e-orchestrator` | The process that launches the games, relays between them, and reports |
 | `e2e-compiler-plugin` | The K2 plugin: FIR checkers and the IR transform |
-| `e2e-runtime` | RPC, socket transport, orchestrator, node runners, reporting, process launcher |
-| `e2e-mc` | The framework mod, the Minecraft accessors and codecs, and `src/tests` as a second mod |
-| `e2e-gradle-plugin` | An included build. Harvests launch commands from ModDevGradle and adds `runE2e` |
+| `e2e-gradle-plugin` | An included build. Applies and configures everything, adds `runE2eTests` |
+| `e2e-example` | A consumer: the plugins block, the `mcE2E` block, and one suite |
 
-## How the launch works
-
-The Gradle plugin deliberately does **not** register the Minecraft runs. Those are ordinary
-ModDevGradle runs the build declares (`e2eServer`, `e2eClient`), and the plugin only reads the
-command lines ModDevGradle already worked out for them — its run task is a plain `JavaExec` whose
-`exec()` adds nothing but classpath, working directory and environment. A ModDevGradle version bump
-therefore cannot silently change how the game is launched here.
-
-Two details that bite:
-
-- ModDevGradle passes its VM args as an `@argfile` whose path is escaped for Gradle's *own* argfile.
-  Handed straight to a process that escaping is wrong, and the JVM quietly stops expanding the file
-  and reads the leftover token as the main class. The launcher un-escapes it.
-- The classpath runs to ~140 entries, past the Windows command line limit, so it goes into an
-  argument file of our own — and only it, because the JVM will not expand one argfile from inside
-  another.
+`e2e-core` and `e2e-protocol` deliberately do not share a package. FancyModLoader builds a real
+module graph, and two jars cannot both export one package to it.
 
 ## Not built yet
 
 - **More than one client.** The plan carries a list and the ids already have a client index, but the
-  build declares a single client run.
-- **Publishing.** The Gradle plugin applies the compiler plugin nowhere; `e2e-mc` wires it with
-  `-Xplugin` from the project output. An external consumer needs that combined and published.
+  plugin launches a single client.
+- **Publishing.** The Gradle plugin resolves the compiler plugin and orchestrator from configurations
+  that default to published coordinates; nothing is published yet, so the example points them at its
+  own projects.
 - **Block return values.** `dispatch` returns nothing; blocks communicate only through `shared`.
-- **World setup.** The server run is seeded with a flat-world `server.properties` and an accepted
-  EULA; there is no per-suite world fixture yet.
+- **World fixtures.** The server run is seeded with a flat world and an accepted EULA, nothing more.

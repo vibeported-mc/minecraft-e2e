@@ -1,46 +1,160 @@
 package dev.vibeported.mc.e2e.gradle
 
+import net.neoforged.moddevgradle.dsl.NeoForgeExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.ListProperty
-import org.gradle.api.provider.Property
+import org.gradle.api.file.FileCollection
+import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.api.tasks.JavaExec
-import org.gradle.api.tasks.TaskAction
-import org.gradle.api.DefaultTask
-import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.Internal
-import org.gradle.api.tasks.InputFiles
-import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.SourceSet
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.language.jvm.tasks.ProcessResources
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.io.File
 
 /**
- * Runs a NeoForge client and server together, driven by an orchestrator, against a compiled test mod.
+ * Everything a build needs to run end-to-end tests against a real NeoForge server and client.
  *
- * Deliberately does not register the Minecraft runs itself. Those are ordinary ModDevGradle runs the
- * consuming build declares and customises, and this plugin only harvests the command lines
- * ModDevGradle already worked out for them. That keeps it clear of ModDevGradle internals, so a
- * version bump there cannot silently change how the game is launched here.
+ * It applies Kotlin, serialization and ModDevGradle, creates the source set the suites live in,
+ * generates that mod's metadata, applies the e2e compiler plugin to it, registers the two game runs,
+ * seeds their directories, and adds `runE2eTests`. A consuming build is the plugins block and one
+ * `mcE2E { }` block.
+ *
+ * It does not wrap ModDevGradle: `mcE2E { neoForge { } }` hands out the real extension, so a version
+ * bump there cannot silently change what a build is allowed to say, and there is no passthrough here
+ * to keep in step with it.
  */
 class E2eGradlePlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
-        val settings = project.extensions.create("e2e", E2eExtension::class.java).apply {
-            serverRunTask.convention("runE2eServer")
-            clientRunTasks.convention(listOf("runE2eClient"))
+        project.plugins.apply("org.jetbrains.kotlin.jvm")
+        project.plugins.apply("org.jetbrains.kotlin.plugin.serialization")
+        project.plugins.apply("net.neoforged.moddev")
+
+        val settings = project.extensions.create("mcE2E", McE2eExtension::class.java, project).apply {
+            sourceSetName.convention("e2eTest")
+            clients.convention(1)
             serverAddress.convention("localhost:25565")
             reportDir.convention(project.layout.buildDirectory.dir("reports/e2e"))
             startupTimeoutSeconds.convention(900L)
             testTimeoutSeconds.convention(300L)
+            javaVersion.convention(25)
+            e2eModId.convention(modId.map { "${it}_e2e" }.orElse("e2e_tests"))
         }
 
-        // What the orchestrator process runs with. A consuming build points this at the published
-        // e2e-runtime; this repo points it at its own project.
-        val orchestratorClasspath = project.configurations.create("e2eOrchestrator") {
+        project.extensions.configure(JavaPluginExtension::class.java) {
+            it.toolchain.languageVersion.set(settings.javaVersion.map(JavaLanguageVersion::of))
+        }
+        project.tasks.withType(KotlinCompile::class.java).configureEach { task ->
+            task.compilerOptions.jvmTarget.set(
+                settings.javaVersion.map { JvmTarget.fromTarget(it.toString()) }
+            )
+        }
+
+        // ModDevGradle adds repositories to the project, which makes Gradle prefer those over any a
+        // settings file declares. Anything the framework needs has to be named again here.
+        project.repositories.mavenCentral()
+        project.repositories.maven { it.setUrl("https://maven.neoforged.net/releases") }
+        project.repositories.maven { it.setUrl("https://thedarkcolour.github.io/KotlinForForge/") }
+
+        val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
+        val suites = sourceSets.maybeCreate(settings.sourceSetName.get())
+
+        val compilerPlugin = project.configurations.create("e2eCompilerPlugin") {
             it.isCanBeConsumed = false
             it.isCanBeResolved = true
+        }
+        val orchestrator = project.configurations.create("e2eOrchestrator") {
+            it.isCanBeConsumed = false
+            it.isCanBeResolved = true
+        }
+
+        // The mod id, and so the generated metadata, depend on what the build says in `mcE2E { }`.
+        project.afterEvaluate {
+            configure(project, settings, suites, compilerPlugin, orchestrator)
+        }
+    }
+
+    private fun configure(
+        project: Project,
+        settings: McE2eExtension,
+        suites: SourceSet,
+        compilerPlugin: FileCollection,
+        orchestrator: FileCollection,
+    ) {
+        val neoForge = project.extensions.getByType(NeoForgeExtension::class.java)
+        val modId = settings.e2eModId.get()
+
+        // Minecraft lands on `main` by default; the suites are a source set of their own.
+        neoForge.addModdingDependenciesTo(suites)
+        neoForge.mods.create(modId) { it.sourceSet(suites) }
+
+        val generatedDir = project.layout.buildDirectory.dir("generated/e2e")
+        val indexDir = generatedDir.map { it.dir("index") }
+        val metadataDir = generatedDir.map { it.dir("metadata") }
+
+        suites.resources.srcDir(indexDir)
+        suites.resources.srcDir(metadataDir)
+
+        val generateMetadata = project.tasks.register("generateE2eModMetadata") { task ->
+            task.description = "Writes the neoforge.mods.toml for the generated e2e test mod."
+            task.outputs.dir(metadataDir)
+            task.doLast {
+                val out = File(metadataDir.get().asFile, "META-INF")
+                out.mkdirs()
+                File(out, "neoforge.mods.toml").writeText(modsToml(modId))
+            }
+        }
+
+        val compileSuites = project.tasks.named(suites.getCompileTaskName("kotlin"), KotlinCompile::class.java)
+        compileSuites.configure { task ->
+            task.inputs.files(compilerPlugin)
+            task.outputs.dir(indexDir)
+            task.compilerOptions.freeCompilerArgs.addAll(
+                project.provider {
+                    compilerPlugin.files.map { "-Xplugin=${it.absolutePath}" } +
+                        listOf("-P", "plugin:dev.vibeported.mc.e2e:indexDir=${indexDir.get().asFile.absolutePath}")
+                }
+            )
+        }
+
+        project.tasks.named(suites.processResourcesTaskName, ProcessResources::class.java).configure {
+            // Both generated resource directories are task outputs, so packaging waits for them.
+            it.dependsOn(compileSuites, generateMetadata)
+        }
+
+        val serverRunDir = project.layout.projectDirectory.dir("run/e2eServer")
+        val clientRunDir = project.layout.projectDirectory.dir("run/e2eClient")
+
+        neoForge.runs.create("e2eServer") { run ->
+            run.server()
+            // The run classpath comes from one source set, and it has to be this one: the framework
+            // mod is a dependency of the suites, and FancyModLoader only finds it as a mod if its
+            // jar is on that classpath.
+            run.sourceSet.set(suites)
+            run.gameDirectory.set(serverRunDir)
+            run.programArgument("--nogui")
+        }
+
+        neoForge.runs.create("e2eClient") { run ->
+            run.client()
+            run.sourceSet.set(suites)
+            run.gameDirectory.set(clientRunDir)
+            // Vanilla joins the address on its own, which spares us reaching into ConnectScreen.
+            run.programArguments.addAll("--quickPlayMultiplayer", settings.serverAddress.get())
+        }
+
+        val seedRunDirs = project.tasks.register("seedE2eRunDirs") { task ->
+            task.description = "Writes the settings an unattended server and client need."
+            task.outputs.dir(serverRunDir)
+            task.outputs.dir(clientRunDir)
+            val extraProperties = settings.serverProperties.getOrElse(emptyList())
+            task.doLast {
+                seedServer(serverRunDir.asFile, extraProperties)
+                seedClient(clientRunDir.asFile)
+            }
         }
 
         val planFile = project.layout.buildDirectory.file("e2e/launch-plan.json")
@@ -48,149 +162,111 @@ class E2eGradlePlugin : Plugin<Project> {
         val harvest = project.tasks.register("harvestE2eLaunchPlan", HarvestLaunchPlanTask::class.java) { task ->
             task.group = "verification"
             task.description = "Records how ModDevGradle would launch the e2e client and server."
-            task.serverRunTask.set(settings.serverRunTask)
-            task.clientRunTasks.set(settings.clientRunTasks)
-            task.indexFiles.from(settings.indexFiles)
+            task.serverRunTask.set("runE2eServer")
+            task.clientRunTasks.set(List(settings.clients.get()) { "runE2eClient" })
+            task.indexFiles.from(indexDir.map { it.file("META-INF/e2e/index.json") })
             task.reportDir.set(settings.reportDir)
             task.serverAddress.set(settings.serverAddress)
             task.startupTimeoutSeconds.set(settings.startupTimeoutSeconds)
             task.testTimeoutSeconds.set(settings.testTimeoutSeconds)
             task.planFile.set(planFile)
+            task.dependsOn(compileSuites, generateMetadata, project.tasks.named(suites.processResourcesTaskName))
+            task.dependsOn(project.tasks.matching { it.name.startsWith("prepare") && it.name.endsWith("Run") })
         }
 
-        project.tasks.register("runE2e", JavaExec::class.java) { task ->
+        project.tasks.register("runE2eTests", JavaExec::class.java) { task ->
             task.group = "verification"
             task.description = "Starts an orchestrated NeoForge server and client and runs the e2e suites."
-            task.dependsOn(harvest)
+            task.dependsOn(harvest, seedRunDirs)
             task.mainClass.set("dev.vibeported.mc.e2e.launcher.E2eMain")
-            task.classpath = orchestratorClasspath
+            task.classpath = orchestrator
             task.argumentProviders.add { listOf(planFile.get().asFile.absolutePath) }
         }
     }
-}
 
-abstract class E2eExtension {
-    /** Name of the ModDevGradle run task that starts the dedicated server. */
-    abstract val serverRunTask: Property<String>
-
-    /** Names of the run tasks that start clients, in client-index order. */
-    abstract val clientRunTasks: ListProperty<String>
-
-    /** The `index.json` files the compiler plugin wrote for the test mods. */
-    abstract val indexFiles: ConfigurableFileCollection
-
-    abstract val reportDir: DirectoryProperty
-    abstract val serverAddress: Property<String>
-    abstract val startupTimeoutSeconds: Property<Long>
-    abstract val testTimeoutSeconds: Property<Long>
-}
-
-/**
- * Turns the run tasks into a launch plan the orchestrator can execute.
- *
- * ModDevGradle's run task is a plain [JavaExec] whose `exec()` only adds the classpath, working
- * directory and environment from public properties before delegating, so everything needed to
- * reproduce the launch can be read off the task without reaching into anything private.
- */
-abstract class HarvestLaunchPlanTask : DefaultTask() {
-
-    @get:Input abstract val serverRunTask: Property<String>
-    @get:Input abstract val clientRunTasks: ListProperty<String>
-    @get:InputFiles abstract val indexFiles: ConfigurableFileCollection
-    @get:Internal abstract val reportDir: DirectoryProperty
-    @get:Input abstract val serverAddress: Property<String>
-    @get:Input abstract val startupTimeoutSeconds: Property<Long>
-    @get:Input abstract val testTimeoutSeconds: Property<Long>
-    @get:OutputFile abstract val planFile: RegularFileProperty
-
-    init {
-        // It reads other tasks, which is exactly what the configuration cache forbids.
-        notCompatibleWithConfigurationCache("Reads the configuration of the ModDevGradle run tasks")
-
-        // The plan is derived from the run tasks, and Gradle cannot see those as inputs. Left to
-        // its own judgement this task goes up to date after the runs have changed underneath it,
-        // and hands the orchestrator a classpath describing a build that no longer exists.
-        outputs.upToDateWhen { false }
+    /**
+     * The suites have to be a mod for FancyModLoader to load them, but nothing about that mod is
+     * interesting enough to make anyone write this file by hand.
+     */
+    private fun modsToml(modId: String): String = buildString {
+        appendLine("modLoader = \"javafml\"")
+        appendLine("loaderVersion = \"[0,)\"")
+        appendLine("license = \"Generated by the minecraft-e2e Gradle plugin\"")
+        appendLine()
+        appendLine("[[mods]]")
+        appendLine("modId = \"$modId\"")
+        appendLine("version = \"0.0.0\"")
+        appendLine("displayName = \"End-to-end suites\"")
+        appendLine()
+        appendLine("[[dependencies.$modId]]")
+        appendLine("modId = \"e2e\"")
+        appendLine("type = \"required\"")
+        appendLine("versionRange = \"[0,)\"")
+        appendLine("ordering = \"AFTER\"")
+        appendLine("side = \"BOTH\"")
     }
 
-    @TaskAction
-    fun harvest() {
-        val server = spec("server", serverRunTask.get())
-        val clients = clientRunTasks.get().mapIndexed { index, name -> spec("client$index", name) }
+    /**
+     * A dedicated server refuses to boot without an accepted EULA, and the defaults it would write
+     * are wrong for a test: a superflat world generates fast and is the same every time, and a dev
+     * client has no session to authenticate with.
+     */
+    private fun seedServer(dir: File, extra: List<String>) {
+        dir.mkdirs()
+        File(dir, "eula.txt").writeText("eula=true" + System.lineSeparator())
 
-        val out = planFile.get().asFile
-        out.parentFile.mkdirs()
-        out.writeText(
-            buildString {
-                append("{")
-                append("\"server\":").append(server).append(",")
-                append("\"clients\":[").append(clients.joinToString(",")).append("],")
-                append("\"indexFiles\":[")
-                append(indexFiles.files.filter { it.isFile }.joinToString(",") { quote(it.absolutePath) })
-                append("],")
-                append("\"reportDir\":").append(quote(reportDir.get().asFile.absolutePath)).append(",")
-                append("\"serverAddress\":").append(quote(serverAddress.get())).append(",")
-                append("\"startupTimeoutSeconds\":").append(startupTimeoutSeconds.get()).append(",")
-                append("\"testTimeoutSeconds\":").append(testTimeoutSeconds.get())
-                append("}")
-            }
+        val defaults = listOf(
+            "online-mode=false",
+            "level-name=e2e",
+            "level-type=minecraft\\:flat",
+            "generate-structures=false",
+            "spawn-npcs=false",
+            "spawn-animals=false",
+            "spawn-monsters=false",
+            "spawn-protection=0",
+            "allow-nether=false",
+            "max-players=4",
+            "view-distance=8",
+            "server-port=25565",
+            "sync-chunk-writes=false",
+            "motd=minecraft-e2e",
         )
-        logger.lifecycle("e2e: launch plan written to ${out.absolutePath}")
+        val overridden = extra.map { it.substringBefore('=') }.filter { it.isNotBlank() }.toSet()
+        val lines = defaults.filterNot { it.substringBefore('=') in overridden } + extra
+        File(dir, "server.properties")
+            .writeText(lines.joinToString(System.lineSeparator(), postfix = System.lineSeparator()))
     }
 
-    private fun spec(name: String, taskName: String): String {
-        val task = project.tasks.findByName(taskName) as? JavaExec
-            ?: error(
-                "No JavaExec task named '$taskName'. Declare a ModDevGradle run of that name, " +
-                    "or point the e2e extension at the right one."
+    /**
+     * Clears the screens a fresh client stops on, none of which anyone is there to click.
+     *
+     * A first launch shows the accessibility onboarding, and a first multiplayer join shows the
+     * third-party server warning; NeoForge adds one of its own whenever any mod loads with a
+     * warning, which is rarely even ours. Each one looks exactly like a hang from the outside.
+     *
+     * Only written when absent, so a run directory someone has since adjusted by hand is left alone.
+     */
+    private fun seedClient(dir: File) {
+        val config = File(dir, "config")
+        config.mkdirs()
+        val warnings = File(config, "neoforge-client.toml")
+        if (!warnings.exists()) {
+            warnings.writeText("showLoadWarnings = false" + System.lineSeparator())
+        }
+
+        val options = File(dir, "options.txt")
+        if (!options.exists()) {
+            dir.mkdirs()
+            options.writeText(
+                listOf(
+                    "onboardAccessibility:false",
+                    "skipMultiplayerWarning:true",
+                    "narrator:0",
+                    "tutorialStep:none",
+                    // An automated client spends its life unfocused.
+                    "pauseOnLostFocus:false",
+                ).joinToString(System.lineSeparator(), postfix = System.lineSeparator())
             )
-
-        // RunGameTask only assembles its classpath inside exec(), from this provider.
-        val classpath = runCatching {
-            @Suppress("UNCHECKED_CAST")
-            val provider = task.javaClass.getMethod("getClasspathProvider").invoke(task)
-            (provider as org.gradle.api.file.FileCollection).files
-        }.getOrElse { task.classpath.files }
-
-        val workingDir = runCatching {
-            val dir = task.javaClass.getMethod("getGameDirectory").invoke(task)
-            (dir as DirectoryProperty).get().asFile
-        }.getOrElse { task.workingDir }
-
-        val environment = runCatching {
-            @Suppress("UNCHECKED_CAST")
-            val env = task.javaClass.getMethod("getEnvironmentProperty").invoke(task)
-            (env as org.gradle.api.provider.MapProperty<String, String>).get()
-        }.getOrElse { emptyMap() }
-
-        return buildString {
-            append("{")
-            append("\"name\":").append(quote(name)).append(",")
-            append("\"javaExecutable\":").append(quote(task.executable ?: "java")).append(",")
-            append("\"jvmArgs\":[").append(task.allJvmArgs.joinToString(",") { quote(it) }).append("],")
-            append("\"mainClass\":").append(quote(task.mainClass.get())).append(",")
-            append("\"programArgs\":[").append(task.args.orEmpty().joinToString(",") { quote(it) }).append("],")
-            append("\"classpath\":[").append(classpath.joinToString(",") { quote(it.absolutePath) }).append("],")
-            append("\"workingDir\":").append(quote(workingDir.absolutePath)).append(",")
-            append("\"environment\":{")
-            append(environment.entries.joinToString(",") { quote(it.key) + ":" + quote(it.value) })
-            append("}")
-            append("}")
         }
-    }
-
-    private fun quote(value: String): String = buildString {
-        append('"')
-        value.forEach {
-            when (it) {
-                '"' -> append("\\\"")
-                '\\' -> append("\\\\")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> if (it < ' ') append("\\u%04x".format(it.code)) else append(it)
-            }
-        }
-        append('"')
     }
 }

@@ -15,8 +15,10 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
-    // ModDevGradle registers the Minecraft runs this plugin harvests launch commands from.
-    compileOnly("net.neoforged:moddev-gradle:2.0.144")
+    // This plugin both applies ModDevGradle and configures it, and hands the real NeoForgeExtension
+    // to the consuming build, so it has to be on the runtime classpath rather than compileOnly.
+    implementation("net.neoforged:moddev-gradle:2.0.144")
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
 }
 
 gradlePlugin {

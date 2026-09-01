@@ -31,6 +31,6 @@ include(
     ":e2e-protocol",
     ":e2e-core",
     ":e2e-orchestrator",
-    ":e2e-mc",
+    ":e2e-example",
     ":e2e-compiler-plugin",
 )
