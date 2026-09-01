@@ -77,15 +77,34 @@ object ProcedureCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKi
             override fun visitElement(element: FirElement) = element.acceptChildren(this)
 
             override fun visitPropertyAccessExpression(propertyAccessExpression: FirPropertyAccessExpression) {
-                inspect(propertyAccessExpression, propertyAccessExpression.calleeReference.toResolvedVariableSymbol())
+                // Only a bare reference can be a captured local. Reached through a receiver it is a
+                // member of something, and the thing worth complaining about is the receiver -- which
+                // the walk below arrives at on its own. Without this, a member of a local class is
+                // itself reported as local, and one capture is announced twice.
+                if (propertyAccessExpression.explicitReceiver == null) {
+                    inspect(
+                        propertyAccessExpression,
+                        propertyAccessExpression.calleeReference.toResolvedVariableSymbol(),
+                    )
+                }
                 propertyAccessExpression.acceptChildren(this)
             }
 
             override fun visitVariableAssignment(variableAssignment: FirVariableAssignment) {
-                // The target is the lValue; writing to a captured local is just as impossible as
-                // reading one, so both sides are inspected.
+                // Writing to a captured local is just as impossible as reading one, so the target
+                // is inspected as well as the value.
                 val target = variableAssignment.lValue as? FirPropertyAccessExpression
-                inspect(variableAssignment, target?.calleeReference?.toResolvedVariableSymbol())
+                if (target?.explicitReceiver == null) {
+                    inspect(variableAssignment, target?.calleeReference?.toResolvedVariableSymbol())
+                }
+
+                // And then *inside* the target, which is the case that matters: in
+                // `captured.field = x` the assignment's own callee is `field`, an ordinary member of
+                // some class, and the captured local is only reachable as its receiver. The same
+                // goes for `captured[i] = x`, where the target is a call rather than a property at
+                // all. Walking the children reaches the local in both, and cannot double-report the
+                // plain `captured = x` case, which has no children to walk.
+                variableAssignment.lValue.acceptChildren(this)
                 variableAssignment.rValue.accept(this)
             }
 
