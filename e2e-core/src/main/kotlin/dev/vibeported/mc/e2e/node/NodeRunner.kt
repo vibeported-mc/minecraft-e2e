@@ -1,15 +1,14 @@
 package dev.vibeported.mc.e2e.node
 
+import dev.vibeported.mc.e2e.Node
+import dev.vibeported.mc.e2e.RunContext
+import dev.vibeported.mc.e2e.ScopeFactory
+import dev.vibeported.mc.e2e.protocol.ProcedureId
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.mc.McValueCodec
 import dev.vibeported.mc.e2e.mc.TickClock
-import dev.vibeported.mc.e2e.mc.applyPlayerAction
-import dev.vibeported.mc.e2e.mc.Screenshots
-import dev.vibeported.mc.e2e.mc.awaitPlayerState
 import dev.vibeported.mc.e2e.rpc.Event
-import dev.vibeported.mc.e2e.rpc.AwaitPlayer
-import dev.vibeported.mc.e2e.rpc.ControlPlayer
-import dev.vibeported.mc.e2e.rpc.InvokeBlock
+import dev.vibeported.mc.e2e.rpc.InvokeProcedure
 import dev.vibeported.mc.e2e.rpc.RemoteInvocationException
 import dev.vibeported.mc.e2e.rpc.Request
 import dev.vibeported.mc.e2e.rpc.RpcPeer
@@ -21,7 +20,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import net.minecraft.client.Minecraft
@@ -44,7 +42,7 @@ public class NodeRunner(
      * Where block bodies run. In a game process this is the event loop, which is what makes
      * Minecraft safe to touch anywhere in a block; a test with no game passes something simpler.
      */
-    private val blockDispatcher: CoroutineContext = EmptyCoroutineContext,
+    private val procedureDispatcher: CoroutineContext = EmptyCoroutineContext,
     private val codec: ValueCodec = McValueCodec(),
     /** Ticked by the game, so a block can wait for one. Idle in a test with no game attached. */
     public val tickClock: TickClock = TickClock(),
@@ -68,77 +66,66 @@ public class NodeRunner(
         }
     }
 
+    /**
+     * This node's identity and reach, for anything running inside a block body.
+     *
+     * Built once: a node outlives every test it runs, and a `server { }` nested inside a block finds
+     * it by looking up the coroutine context rather than by being handed anything.
+     */
+    private val node: Node by lazy {
+        Node(
+            self = id,
+            tables = registry,
+            codec = codec,
+            // Everything a block asks for goes to the orchestrator, including a block this node
+            // raised for somewhere else: it routes onward and hands back the result.
+            relay = { peer.call(NodeId.ORCHESTRATOR, it) },
+            scopes = ScopeFactory { run, block -> scopeFor(run, block) },
+        )
+    }
+
     private suspend fun handle(request: Request): JsonElement? = when (val payload = request.payload) {
-        is InvokeBlock -> {
-            runBlock(payload)
-            null
-        }
-
-        // Only the server can move a player, so this arrives here when a client block asked for it.
-        is ControlPlayer -> withContext(blockDispatcher) {
-            val server = server ?: error("Node $id was asked to move a player but is not the server")
-            server.applyPlayerAction(payload.client, payload.action)
-            null
-        }
-
-        // And only a client can say whether it has caught up.
-        is AwaitPlayer -> withContext(blockDispatcher) {
-            val client = client ?: error("Node $id was asked about its player but is not a client")
-            awaitPlayerState(client, tickClock, payload.expect, payload.timeoutTicks)
-                ?.let { JsonPrimitive(it) }
-        }
+        is InvokeProcedure -> runProcedure(payload)
 
         else -> error("Node $id has no handler for $payload")
     }
 
-    /**
-     * A picture of what the client was looking at when it gave up.
-     *
-     * Only a client has anything to photograph, and a capture that itself fails must not replace the
-     * failure being reported -- so anything going wrong here is swallowed and the original stands.
-     */
-    private suspend fun screenshotOfFailure(payload: InvokeBlock): String? {
-        val minecraft = client ?: return null
-        return try {
-            withContext(blockDispatcher) {
-                Screenshots.capture(
-                    minecraft = minecraft,
-                    client = id.name,
-                    test = payload.test,
-                    name = "failed - " + payload.block.value.substringAfterLast('/'),
-                ).absolutePath
-            }
-        } catch (ignored: Throwable) {
-            null
-        }
-    }
+    private fun scopeFor(run: RunContext, block: ProcedureId): Any = NodeProcedureScope(
+        self = id,
+        runId = run.runId,
+        currentProcedure = block,
+        testName = run.testName,
+        server = server,
+        client = client,
+        codec = codec,
+        tickClock = tickClock,
+        emitLog = { logs.trySend(it) },
+        toOrchestrator = { peer.call(NodeId.ORCHESTRATOR, it) },
+    )
 
-    private suspend fun runBlock(payload: InvokeBlock) {
-        val table = registry.tableFor(payload.block)
-        val scope = NodeBlockScope(
-            self = id,
-            runId = payload.runId,
-            currentBlock = payload.block,
-            testName = payload.test,
-            server = server,
-            client = client,
-            codec = codec,
-            tickClock = tickClock,
-            emitLog = { logs.trySend(it) },
-            // Everything a block asks for goes to the orchestrator, including a nested client block
-            // this node raised: it routes onward and hands back the result.
-            toOrchestrator = { peer.call(NodeId.ORCHESTRATOR, it) },
-        )
+    private suspend fun runProcedure(payload: InvokeProcedure): JsonElement? {
+        val table = registry.tableFor(payload.procedure)
+        val id = payload.procedure.value
+        val run = RunContext(payload.runId, payload.test)
+        val scope = scopeFor(run, payload.procedure)
+
+        // Decoded by the table rather than here: only the generated code knows what each parameter
+        // was declared as, and this end has a list of values with no idea what any of them mean.
+        val args = table.decodeArgs(id, payload.args, codec)
 
         // The whole body runs on the game thread, which is what makes every Minecraft call in it
-        // safe. Suspending inside it releases the thread, so the game keeps ticking meanwhile.
-        try {
-            withContext(blockDispatcher) {
-                table.invoke(payload.block.value, scope)
+        // safe. Suspending inside it releases the thread, so the game keeps ticking meanwhile. The
+        // node and the run ride along, so a `server { }` written inside this body can find them.
+        return try {
+            val result = withContext(procedureDispatcher + node + run) {
+                table.invoke(id, scope, args)
             }
+            table.encodeResult(id, result, codec)
         } catch (failure: Throwable) {
-            val shot = screenshotOfFailure(payload) ?: throw failure
-            throw RemoteInvocationException(failure.toRemoteFailure(id).copy(screenshot = shot))
+            // Whatever can take a picture of this node registers itself; the transport has no
+            // idea what a screenshot is and no way to take one.
+            val shot = FailureArtifacts.capture(payload.procedure, payload.test) ?: throw failure
+            throw RemoteInvocationException(failure.toRemoteFailure(this.id).copy(screenshot = shot))
         }
     }
 }

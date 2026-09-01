@@ -1,31 +1,27 @@
 package dev.vibeported.mc.e2e
 
-import dev.vibeported.mc.e2e.protocol.BlockId
 import dev.vibeported.mc.e2e.protocol.NodeId
-import dev.vibeported.mc.e2e.protocol.SharedId
 import net.minecraft.client.Minecraft
-import net.minecraft.core.BlockPos
 import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.level.Level
-import kotlin.reflect.KClass
 
 /** Restricts implicit receivers so an inner block cannot silently call an outer scope's members. */
 @DslMarker
-public annotation class E2eDsl
+public annotation class ProcedureDsl
 
 /**
  * Common receiver of everything the compiler plugin lifts: every `server`/`client` block, however
  * deeply nested.
  *
- * After the plugin has run, the single argument of every lifted function is a [BlockScope], which
- * the local node supplies. Nothing else is in scope, by construction -- that is the whole point.
+ * What a block can reach is exactly this, its own arguments, and whatever is top-level or static --
+ * by construction, since it runs in a process where nothing else it might have closed over exists.
  */
-@E2eDsl
-public interface E2eBlockScope {
+@ProcedureDsl
+public interface ProcedureScope {
     /** Where this block is currently executing. */
     public val self: NodeId
 
@@ -37,19 +33,6 @@ public interface E2eBlockScope {
 
     /** Appends a line to this node's captured log, which the report interleaves by time. */
     public fun log(message: String)
-
-    /** Sends a lifted block to [target] and suspends until that node has finished running it. */
-    public suspend fun dispatch(block: BlockId, target: NodeId)
-
-    /**
-     * A handle on one `shared` value, bound to this node.
-     *
-     * Deliberately not suspending: the compiler plugin emits this wherever a shared value is
-     * mentioned, so it has to be legal everywhere a plain expression is -- inside a non-suspending
-     * lambda, or on the way into a helper function. Crossing the wire is what [Shared.get] and
-     * [Shared.set] are for.
-     */
-    public fun <T : Any> sharedHandle(id: SharedId, type: KClass<T>): Shared<T>
 }
 
 /**
@@ -59,7 +42,7 @@ public interface E2eBlockScope {
  * nothing else -- so it is read at compile time and never executed. That is why it offers no way to
  * reach either side of the game.
  */
-public interface E2eScope : E2eBlockScope
+public interface E2eScope : ProcedureScope
 
 /**
  * Receiver of a block that runs inside a game process.
@@ -67,7 +50,7 @@ public interface E2eScope : E2eBlockScope
  * Blocks run on the game loop, so the tick is the natural unit of waiting here: awaiting one hands
  * the loop back and picks up exactly where the game next got a chance to change something.
  */
-public interface NodeScope : E2eBlockScope {
+public interface NodeScope : ProcedureScope {
 
     /** This node's level. A [ServerLevel] on the server, a [ClientLevel] on a client. */
     public val level: Level
@@ -79,47 +62,13 @@ public interface NodeScope : E2eBlockScope {
     public suspend fun awaitTicks(count: Int = 1)
 
     /**
-     * Moves a player, and does not return until that client has actually arrived.
+     * The client this node is, when something has to name one and nobody said which.
      *
-     * Only the server can move a player, so a call from a client block is routed there and back.
-     * Waiting for the client to confirm is the point: the server sets its own copy of the position
-     * the instant it teleports, so a call that returned then would let the next line run against a
-     * client that has not moved yet.
-     */
-    public suspend fun teleport(
-        @MinecraftClientName client: String = DEFAULT_CLIENT,
-        pos: BlockPos,
-        flying: Boolean = false,
-    )
-
-    /** Turns a player to face [pos], returning once that client is looking at it. @see teleport */
-    public suspend fun lookAt(@MinecraftClientName client: String = DEFAULT_CLIENT, pos: BlockPos)
-
-    /** Turns one player to face another, returning once they are. @see teleport */
-    public suspend fun lookAtPlayer(
-        @MinecraftClientName client: String = DEFAULT_CLIENT,
-        @MinecraftClientName target: String,
-    )
-
-    /**
-     * The client these calls mean when none is named.
-     *
-     * Inside a `client("steve") { }` block that is steve, so the body can say `teleport(pos)` and
-     * mean itself. On the server there is no such obvious answer, so it is the default client.
+     * Inside a `client("steve") { }` body that is steve, so a helper can act on "this client"
+     * without being told. On the server there is no such obvious answer, so it is the default.
      */
     public val thisClient: String
 }
-
-/** @see NodeScope.teleport */
-public suspend fun NodeScope.teleport(pos: BlockPos, flying: Boolean = false): Unit =
-    teleport(thisClient, pos, flying)
-
-/** @see NodeScope.lookAt */
-public suspend fun NodeScope.lookAt(pos: BlockPos): Unit = lookAt(thisClient, pos)
-
-/** @see NodeScope.lookAtPlayer */
-public suspend fun NodeScope.lookAtPlayer(@MinecraftClientName target: String): Unit =
-    lookAtPlayer(thisClient, target)
 
 /**
  * Receiver of a `server { }` block, which runs in the dedicated server process, **on the server
@@ -159,13 +108,3 @@ public interface ClientScope : NodeScope {
     /** This client's player, or null before it has joined a world. */
     public val clientPlayer: LocalPlayer?
 }
-
-/**
- * The concrete scope a node hands to a lifted block.
- *
- * It satisfies both node scopes so that one generated `invoke` can serve server and client blocks
- * alike. Which members are legal in a given block is still settled at compile time by the receiver
- * its source lambda declared: a `server { }` body is typed `suspend ServerScope.() -> Unit` and can
- * never see a client accessor, whatever the runtime object handed to it happens to also implement.
- */
-public interface BlockScope : ServerScope, ClientScope

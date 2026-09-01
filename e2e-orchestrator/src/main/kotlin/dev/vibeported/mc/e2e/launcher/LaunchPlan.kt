@@ -20,22 +20,32 @@ public data class LaunchSpec(
     public val environment: Map<String, String> = emptyMap(),
 )
 
-/** Everything the orchestrator needs to run a suite, handed to it as one file. */
+/**
+ * Everything the orchestrator needs to bring a cluster up, handed to it as one file.
+ *
+ * Nothing about tests. The orchestrator starts the processes, wires the transport and calls
+ * [mainClass]; what that main then does with the transport is none of its business.
+ */
 @Serializable
 public data class LaunchPlan(
     public val server: LaunchSpec,
     public val clients: List<LaunchSpec> = emptyList(),
-    /** Paths to the `index.json` files the compiler plugin wrote for the test mods. */
-    public val indexFiles: List<String> = emptyList(),
+    /** The class whose `main` is run once the cluster is up. */
+    public val mainClass: String = "",
+    /**
+     * Clients to start before that main runs, on top of every name the compiler collected.
+     *
+     * A name nobody could work out ahead of time is not listed here and does not need to be: the
+     * first call addressed to it starts it.
+     */
+    public val clientNames: List<String> = emptyList(),
     public val reportDir: String,
     /** 0 asks the operating system for a free port, which is what avoids clashing runs. */
     public val port: Int = 0,
     /** The address the client is told to join once it is up. */
     public val serverAddress: String = "localhost:25565",
     public val startupTimeoutSeconds: Long = 900,
-    /** Wall clock for one whole test. */
-    public val testTimeoutSeconds: Long = 300,
-    /** How long one block invocation may take before the orchestrator stops waiting for it. */
+    /** How long one procedure call may take before the transport stops waiting for it. */
     public val callTimeoutSeconds: Long = 120,
     /** How long a teleport or a turn may take to show up on the client that was asked. */
     public val actionTimeoutSeconds: Long = 10,

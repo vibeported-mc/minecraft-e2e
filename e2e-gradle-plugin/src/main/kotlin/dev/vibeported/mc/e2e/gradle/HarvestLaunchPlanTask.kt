@@ -24,12 +24,12 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
 
     @get:Input abstract val serverRunTask: Property<String>
     @get:Input abstract val clientRunTasks: ListProperty<String>
-    @get:InputFiles abstract val indexFiles: ConfigurableFileCollection
     @get:Internal abstract val reportDir: DirectoryProperty
     @get:Input abstract val serverAddress: Property<String>
     @get:Input abstract val startupTimeoutSeconds: Property<Long>
-    @get:Input abstract val testTimeoutSeconds: Property<Long>
     @get:Input abstract val callTimeoutSeconds: Property<Long>
+    @get:Input abstract val mainClass: Property<String>
+    @get:Input abstract val clientNames: ListProperty<String>
     @get:Input abstract val actionTimeoutSeconds: Property<Long>
     @get:Input abstract val clientWidth: Property<Int>
     @get:Input abstract val clientHeight: Property<Int>
@@ -58,13 +58,13 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
                 append("{")
                 append("\"server\":").append(server).append(",")
                 append("\"clients\":[").append(clients.joinToString(",")).append("],")
-                append("\"indexFiles\":[")
-                append(indexFiles.files.filter { it.isFile }.joinToString(",") { quote(it.absolutePath) })
-                append("],")
                 append("\"reportDir\":").append(quote(reportDir.get().asFile.absolutePath)).append(",")
+                append("\"mainClass\":").append(quote(mainClass.get())).append(",")
+                append("\"clientNames\":[")
+                append(clientNames.get().joinToString(",") { quote(it) })
+                append("],")
                 append("\"serverAddress\":").append(quote(serverAddress.get())).append(",")
                 append("\"startupTimeoutSeconds\":").append(startupTimeoutSeconds.get()).append(",")
-                append("\"testTimeoutSeconds\":").append(testTimeoutSeconds.get()).append(",")
                 append("\"callTimeoutSeconds\":").append(callTimeoutSeconds.get()).append(",")
                 append("\"actionTimeoutSeconds\":").append(actionTimeoutSeconds.get()).append(",")
                 append("\"clientWidth\":").append(clientWidth.get()).append(",")

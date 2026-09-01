@@ -26,7 +26,10 @@ repositories {
 }
 
 dependencies {
-    api(project(":e2e-protocol"))
+    api(libs.coroutines.core)
+    api(libs.serialization.json)
+    // The value codec resolves a serializer from the runtime class of an argument.
+    implementation(libs.kotlin.reflect)
 
     // Kotlin as a loaded mod. A dev run would have the stdlib on its classpath anyway, but a mod jar
     // shipped to anyone else would not, and this is the version pairing that has to hold either way.

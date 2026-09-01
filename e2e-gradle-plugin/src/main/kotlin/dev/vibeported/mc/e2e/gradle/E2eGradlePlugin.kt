@@ -5,7 +5,6 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.FileCollection
 import org.gradle.api.plugins.JavaPluginExtension
-import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.toolchain.JavaLanguageVersion
@@ -38,8 +37,8 @@ class E2eGradlePlugin : Plugin<Project> {
             serverAddress.convention("localhost:25565")
             reportDir.convention(project.layout.buildDirectory.dir("reports/e2e"))
             startupTimeoutSeconds.convention(900L)
-            testTimeoutSeconds.convention(300L)
             callTimeoutSeconds.convention(120L)
+            orchestratorMain.convention("")
             actionTimeoutSeconds.convention(10L)
             clientWidth.convention(1280)
             clientHeight.convention(720)
@@ -129,6 +128,8 @@ class E2eGradlePlugin : Plugin<Project> {
             it.dependsOn(compileSuites, generateMetadata)
         }
 
+        val planFile = project.layout.buildDirectory.file("e2e/launch-plan.json")
+
         val serverRunDir = project.layout.projectDirectory.dir("run/e2eServer")
         val clientRunDir = project.layout.projectDirectory.dir("run/e2eClient")
 
@@ -150,16 +151,36 @@ class E2eGradlePlugin : Plugin<Project> {
             run.programArguments.addAll("--quickPlayMultiplayer", settings.serverAddress.get())
         }
 
+        // The orchestrator boots the loader and is then loaded through it, so it has to be on the
+        // same runtime classpath as the suites rather than off to one side.
+        project.configurations.named(suites.runtimeOnlyConfigurationName).configure {
+            it.extendsFrom(project.configurations.getByName("e2eOrchestrator"))
+        }
+
+        val orchestratorRunDir = project.layout.projectDirectory.dir("run/e2eOrchestrator")
+
+        neoForge.runs.create("e2eOrchestrator") { run ->
+            // A server run, because that is the dist the loader has to prepare, and then a main
+            // class of ours instead of Minecraft: no world is ever created.
+            run.server()
+            run.sourceSet.set(suites)
+            run.gameDirectory.set(orchestratorRunDir)
+            run.mainClass.set("dev.vibeported.mc.e2e.launcher.OrchestratorEntrypoint")
+            run.jvmArgument("-De2e.launch.plan=${planFile.get().asFile.absolutePath}")
+            run.jvmArgument("-De2e.report.dir=${settings.reportDir.get().asFile.absolutePath}")
+        }
+
         val seedRunDirs = project.tasks.register("seedE2eRunDirs") { task ->
-            task.description = "Writes the settings an unattended server needs."
+            task.description = "Writes the settings an unattended server needs, and clears its world."
             task.outputs.dir(serverRunDir)
+            // It deletes a world every time it runs, so being skipped as up to date would leave the
+            // previous run's world in place -- which is the exact thing it exists to prevent.
+            task.outputs.upToDateWhen { false }
             val extraProperties = settings.serverProperties.getOrElse(emptyList())
             task.doLast {
                 seedServer(serverRunDir.asFile, extraProperties)
             }
         }
-
-        val planFile = project.layout.buildDirectory.file("e2e/launch-plan.json")
 
         val harvest = project.tasks.register("harvestE2eLaunchPlan", HarvestLaunchPlanTask::class.java) { task ->
             task.group = "verification"
@@ -168,11 +189,11 @@ class E2eGradlePlugin : Plugin<Project> {
             // One harvested command is enough: the orchestrator spawns a process per client the
             // suites name, each with its own username and game directory.
             task.clientRunTasks.set(listOf("runE2eClient"))
-            task.indexFiles.from(indexDir.map { it.file("META-INF/e2e/index.json") })
             task.reportDir.set(settings.reportDir)
+            task.mainClass.set(settings.orchestratorMain)
+            task.clientNames.set(settings.clients)
             task.serverAddress.set(settings.serverAddress)
             task.startupTimeoutSeconds.set(settings.startupTimeoutSeconds)
-            task.testTimeoutSeconds.set(settings.testTimeoutSeconds)
             task.callTimeoutSeconds.set(settings.callTimeoutSeconds)
             task.actionTimeoutSeconds.set(settings.actionTimeoutSeconds)
             task.clientWidth.set(settings.clientWidth)
@@ -187,13 +208,16 @@ class E2eGradlePlugin : Plugin<Project> {
             task.dependsOn(project.tasks.matching { it.name.startsWith("prepare") && it.name.endsWith("Run") })
         }
 
-        project.tasks.register("runE2eTests", JavaExec::class.java) { task ->
+        // The orchestrator is started by ModDevGradle like any other run, so `runE2eTests` is a
+        // name for that run plus everything it needs prepared first.
+        project.tasks.register("runE2eTests") { task ->
             task.group = "verification"
-            task.description = "Starts an orchestrated NeoForge server and client and runs the e2e suites."
+            task.description = "Starts an orchestrated NeoForge cluster and runs the configured main."
+            task.dependsOn(harvest, seedRunDirs, project.tasks.named("runE2eOrchestrator"))
+        }
+
+        project.tasks.named("runE2eOrchestrator").configure { task ->
             task.dependsOn(harvest, seedRunDirs)
-            task.mainClass.set("dev.vibeported.mc.e2e.launcher.E2eMain")
-            task.classpath = orchestrator
-            task.argumentProviders.add { listOf(planFile.get().asFile.absolutePath) }
         }
     }
 
@@ -228,9 +252,15 @@ class E2eGradlePlugin : Plugin<Project> {
         dir.mkdirs()
         File(dir, "eula.txt").writeText("eula=true" + System.lineSeparator())
 
+        // A world left over from the last run is not a world a test can reason about. It remembers
+        // where every player stood, what they were holding, and whether they were alive -- and a
+        // player who died in the previous run comes back dead, so `waitForPlayer` waits forever for
+        // someone who is never going to get up.
+        File(dir, LEVEL_NAME).deleteRecursively()
+
         val defaults = listOf(
             "online-mode=false",
-            "level-name=e2e",
+            "level-name=" + LEVEL_NAME,
             "level-type=minecraft\\:flat",
             "generate-structures=false",
             "spawn-npcs=false",
@@ -248,5 +278,10 @@ class E2eGradlePlugin : Plugin<Project> {
         val lines = defaults.filterNot { it.substringBefore('=') in overridden } + extra
         File(dir, "server.properties")
             .writeText(lines.joinToString(System.lineSeparator(), postfix = System.lineSeparator()))
+    }
+
+    private companion object {
+        /** The world a run builds, deleted and rebuilt every time so a test starts from nothing. */
+        const val LEVEL_NAME = "e2e"
     }
 }

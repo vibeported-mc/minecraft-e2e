@@ -57,14 +57,14 @@ internal object Nodes {
         NodeRunner(
             id = self,
             peer = RpcPeer(transport, callTimeout = 10.minutes),
-            registry = TableRegistry.load(E2eMod::class.java.classLoader),
+            registry = TableRegistry.load(CoreMod::class.java.classLoader),
             server = server,
             client = client,
-            blockDispatcher = GameThreadDispatcher(loop),
+            procedureDispatcher = GameThreadDispatcher(loop),
             tickClock = tickClock,
         ).start(nodeScope)
 
-        E2eMod.LOG.info("e2e: {} connected to the orchestrator at {}:{}", self, host, port)
+        CoreMod.LOG.info("e2e: {} connected to the orchestrator at {}:{}", self, host, port)
     }
 
     /**
@@ -101,8 +101,6 @@ internal object ClientNode {
             if (minecraft.level == null || minecraft.player == null) return@addListener
             if (!connected.compareAndSet(false, true)) return@addListener
 
-            // On the render thread, and the window exists by now, which is all moving it needs.
-            WindowLayout.apply(minecraft)
             Nodes.connect(self, host, port, server = null, client = minecraft)
         }
     }

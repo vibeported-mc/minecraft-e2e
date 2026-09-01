@@ -1,0 +1,16 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "e2e_orchestrator"
+version = "0.1.0"
+displayName = "Minecraft E2E orchestrator"
+description = '''Boots the cluster, wires the transport, and runs somebody else's main.'''
+
+[[dependencies.e2e_orchestrator]]
+modId = "e2e"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"

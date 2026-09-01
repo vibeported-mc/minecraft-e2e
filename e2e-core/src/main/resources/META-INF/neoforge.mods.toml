@@ -8,9 +8,6 @@ version = "0.1.0"
 displayName = "Minecraft E2E"
 description = '''Runs orchestrated end-to-end tests across a real server and client.'''
 
-[[mixins]]
-config = "e2e.mixins.json"
-
 [[dependencies.e2e]]
 modId = "neoforge"
 type = "required"

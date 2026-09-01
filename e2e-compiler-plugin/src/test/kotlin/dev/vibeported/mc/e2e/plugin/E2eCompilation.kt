@@ -4,7 +4,7 @@ import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.PluginOption
 import com.tschuchort.compiletesting.SourceFile
-import dev.vibeported.mc.e2e.protocol.E2eIndex
+import dev.vibeported.mc.e2e.protocol.ProcedureIndex
 import kotlinx.serialization.json.Json
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import java.io.File
@@ -53,13 +53,13 @@ class E2eCompilation(private val workingDir: File) {
          * The index the plugin wrote, parsed through the very model `e2e-api` publishes.
          *
          * The plugin assembles that JSON by hand to avoid dragging a serialization library onto the
-         * compiler classpath, so reading it back through [E2eIndex] here is what keeps the writer
+         * compiler classpath, so reading it back through [ProcedureIndex] here is what keeps the writer
          * and the reader from drifting apart.
          */
-        fun index(): E2eIndex {
-            val file = File(indexDir, E2eIndex.RESOURCE_PATH)
+        fun index(): ProcedureIndex {
+            val file = File(indexDir, ProcedureIndex.RESOURCE_PATH)
             check(file.isFile) { "The plugin wrote no index to ${file.absolutePath}" }
-            return Json { ignoreUnknownKeys = true }.decodeFromString(E2eIndex.serializer(), file.readText())
+            return Json { ignoreUnknownKeys = true }.decodeFromString(ProcedureIndex.serializer(), file.readText())
         }
     }
 }

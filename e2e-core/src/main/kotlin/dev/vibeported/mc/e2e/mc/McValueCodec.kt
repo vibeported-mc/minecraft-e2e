@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec
 import dev.vibeported.mc.e2e.rpc.JsonValueCodec
 import dev.vibeported.mc.e2e.rpc.ValueCodec
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import net.minecraft.core.BlockPos
@@ -33,6 +34,10 @@ public class McValueCodec(
 ) : ValueCodec {
 
     override fun encode(type: KClass<*>, value: Any?): JsonElement {
+        // Null is not something either codec can express: a Mojang codec throws inside itself, and
+        // a kotlinx serializer for a non-null type refuses it. It travels as JSON null instead.
+        if (value == null) return JsonNull
+
         val codec = codecFor(type) ?: return fallback.encode(type, value)
         @Suppress("UNCHECKED_CAST")
         val tag = (codec as Codec<Any?>)
@@ -42,6 +47,8 @@ public class McValueCodec(
     }
 
     override fun decode(type: KClass<*>, element: JsonElement): Any? {
+        if (element is JsonNull) return null
+
         val codec = codecFor(type) ?: return fallback.decode(type, element)
         val text = (element as? JsonPrimitive)?.contentOrNull
             ?: error("e2e: expected an encoded ${type.simpleName}, got $element")

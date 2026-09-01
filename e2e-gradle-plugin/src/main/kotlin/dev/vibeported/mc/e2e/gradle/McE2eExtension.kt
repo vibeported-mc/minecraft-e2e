@@ -50,9 +50,6 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
     /** How long a game process may take to reach the orchestrator before the run gives up. */
     abstract val startupTimeoutSeconds: Property<Long>
 
-    /** How long one whole test may run before the orchestrator fails it. */
-    abstract val testTimeoutSeconds: Property<Long>
-
     /** How long one block invocation may take before the orchestrator stops waiting for it. */
     abstract val callTimeoutSeconds: Property<Long>
 
@@ -80,6 +77,22 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
      * anything older, so this is not a preference so much as a fact about the version.
      */
     abstract val javaVersion: Property<Int>
+
+    /**
+     * The class whose `main` the orchestrator runs once the cluster is up.
+     *
+     * Anything with a `main(String[])` qualifies -- a hand-written runner, or a JUnit console
+     * launcher -- because by the time it is called the transport is already wired.
+     */
+    abstract val orchestratorMain: Property<String>
+
+    /**
+     * Clients to start before that main runs, on top of every name the compiler could resolve.
+     *
+     * Rarely needed: a name written as a literal is collected automatically, and a name nobody can
+     * work out ahead of time starts the first time something addresses it.
+     */
+    abstract val clients: ListProperty<String>
 
     /** Extra lines for the generated `server.properties`, or replacements for the defaults. */
     abstract val serverProperties: ListProperty<String>

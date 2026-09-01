@@ -1,6 +1,6 @@
 package dev.vibeported.mc.e2e.plugin
 
-import dev.vibeported.mc.e2e.protocol.E2eIndex
+import dev.vibeported.mc.e2e.protocol.ProcedureIndex
 import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.node.NodeRunner
 import dev.vibeported.mc.e2e.node.TableRegistry
@@ -35,7 +35,7 @@ class InProcessCluster private constructor(
     companion object {
         fun start(
             scope: CoroutineScope,
-            index: E2eIndex,
+            index: ProcedureIndex,
             loader: ClassLoader,
             clients: List<String> = listOf("default"),
         ): InProcessCluster {

@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.vibeported.mc.e2e.dsl.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ContainerScreenAccessor",
+    "CursorRequestAccessor",
+    "GuiOverlayMixin",
+    "InputConstantsMixin",
+    "KeyboardHandlerInvoker",
+    "KeyboardHandlerMixin",
+    "MinecraftMixin",
+    "MouseHandlerInvoker",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

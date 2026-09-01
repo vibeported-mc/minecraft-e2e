@@ -35,7 +35,7 @@ dependencies {
     // The snippets these tests compile call the real DSL, which is Minecraft-typed, so this source
     // set needs the game on its classpath. That is what `addModdingDependenciesTo` below is for.
     testImplementation(project(":e2e-core"))
-    testImplementation(project(":e2e-protocol"))
+    testImplementation(project(":e2e-core"))
     testImplementation(project(":e2e-orchestrator"))
     testImplementation(libs.coroutines.test)
 }
