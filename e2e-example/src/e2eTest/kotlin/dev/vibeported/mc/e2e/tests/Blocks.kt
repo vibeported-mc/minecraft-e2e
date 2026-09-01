@@ -18,10 +18,12 @@ import dev.vibeported.mc.e2e.parallel
 import dev.vibeported.mc.e2e.pixelsPerSecond
 import dev.vibeported.mc.e2e.playerInventory
 import dev.vibeported.mc.e2e.positionOf
+import dev.vibeported.mc.e2e.scroll
 import dev.vibeported.mc.e2e.server
 import dev.vibeported.mc.e2e.shared
 import dev.vibeported.mc.e2e.suite
 import dev.vibeported.mc.e2e.teleport
+import dev.vibeported.mc.e2e.ui
 import dev.vibeported.mc.e2e.timeoutSec
 import dev.vibeported.mc.e2e.waitForPlayer
 import kotlinx.coroutines.delay
@@ -38,8 +40,8 @@ private val FAR_AWAY = BlockPos(100, 200, 200)
 /** Long enough that a person watching the two clients can see what the test is doing. */
 private val HOLD = 5.seconds
 
-/** Slow enough to watch a stack cross the screen. */
-private val DRAG = pixelsPerSecond(500.0)
+/** Slow on purpose: a drag that finishes in three frames is a drag nobody can check. */
+private val DRAG = pixelsPerSecond(150.0)
 
 /** A diamond sword recharges in about 12 ticks, and an uncharged hit barely counts. */
 private const val SWING_TICKS = 14
@@ -72,6 +74,10 @@ val blocks = suite("blocks") {
         parallel {
 
             client("steve") {
+                // Just the world for steve: no hotbar, no hearts, no chat across the middle of a
+                // screenshot. Alex keeps the interface, so one run shows both.
+                ui = false
+
                 val block = target.get()
                 // Diagonally above rather than straight overhead, so facing the block is a real
                 // rotation on both axes and a wrong one would be obvious.
@@ -151,8 +157,11 @@ val blocks = suite("blocks") {
         parallel {
 
             client("steve") {
+                ui = false
                 teleport(target.get().offset(-3, 4, -3), flying = true)
 
+                // The interface comes back on its own the moment the inventory opens: nothing can
+                // be dragged across a screen that is not drawn.
                 playerInventory {
                     // What the server put there has to have reached this client before a drag can
                     // move it, and saying so means a sync problem cannot masquerade as a bad click.
@@ -165,8 +174,27 @@ val blocks = suite("blocks") {
                     click(MouseButton.LEFT)
                     assertThat("the sword should be on the cursor") { carried.item == Items.DIAMOND_SWORD }
 
+                    // Halfway through the gesture, with the sword riding the cursor: the frame the
+                    // overlay exists to make worth taking.
                     moveToSlot(selectedHotbar, DRAG)
-                    click(MouseButton.LEFT)
+                    makeScreenshot("carrying the sword to the main hand")
+
+                    mouseDown(MouseButton.LEFT)
+                    makeScreenshot("the drop, with the button down")
+                    mouseUp(MouseButton.LEFT)
+
+                    // Two buttons at once over an empty slot, which moves nothing and is the case
+                    // that decides whether the indicators really stack. Then a scroll, which leaves
+                    // no state behind for anything but the overlay to remember.
+                    moveToSlot(InventorySlot.INV_2_5, DRAG)
+                    mouseDown(MouseButton.LEFT)
+                    mouseDown(MouseButton.RIGHT)
+                    makeScreenshot("both buttons held")
+                    mouseUp(MouseButton.RIGHT)
+                    mouseUp(MouseButton.LEFT)
+
+                    scroll(1.0)
+                    makeScreenshot("scrolled up")
 
                     assertSlot("the sword should be in the main hand", selectedHotbar) {
                         it.item == Items.DIAMOND_SWORD

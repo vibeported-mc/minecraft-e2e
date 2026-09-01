@@ -58,7 +58,26 @@ internal object SyntheticInput {
         }
     }
 
+    /**
+     * The buttons the framework is currently holding down, by GLFW code.
+     *
+     * Tracked here rather than read back from Minecraft because Minecraft only tracks it when no
+     * screen is open: the assignment to `isLeftPressed` and friends lives in the branch `onButton`
+     * takes when there is no screen. Inside an inventory -- exactly where a drag needs showing --
+     * nothing over there knows.
+     */
+    private val held = mutableSetOf<Int>()
+
+    fun isHeld(button: Int): Boolean = button in held
+
+    /** The last scroll, and when, so an indicator can show it and then fade. */
+    var lastScroll: Double = 0.0
+        private set
+    var lastScrollAtMillis: Long = 0
+        private set
+
     fun button(minecraft: Minecraft, button: Int, action: Int) {
+        if (action == PRESS) held += button else held -= button
         dispatch {
             (minecraft.mouseHandler as MouseHandlerInvoker)
                 .invokeOnButton(minecraft.window.handle(), MouseButtonInfo(button, 0), action)
@@ -78,6 +97,8 @@ internal object SyntheticInput {
     }
 
     fun scroll(minecraft: Minecraft, dx: Double, dy: Double) {
+        lastScroll = dy
+        lastScrollAtMillis = System.currentTimeMillis()
         dispatch {
             (minecraft.mouseHandler as MouseHandlerInvoker)
                 .invokeOnScroll(minecraft.window.handle(), dx, dy)
