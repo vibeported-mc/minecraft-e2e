@@ -8,7 +8,6 @@ dependencies {
     testImplementation(libs.kctfork.core)
     testImplementation(project(":e2e-api"))
     testImplementation(project(":e2e-runtime"))
-    testImplementation(project(":e2e-mock-world"))
     testImplementation(libs.coroutines.test)
 }
 

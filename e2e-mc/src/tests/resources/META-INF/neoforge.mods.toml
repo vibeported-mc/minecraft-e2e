@@ -1,0 +1,16 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "e2e_tests"
+version = "0.1.0"
+displayName = "Minecraft E2E sample suites"
+description = '''The example end-to-end suites, compiled as a mod of their own.'''
+
+[[dependencies.e2e_tests]]
+modId = "e2e"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"

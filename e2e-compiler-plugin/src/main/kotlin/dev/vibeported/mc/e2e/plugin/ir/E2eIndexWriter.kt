@@ -58,7 +58,17 @@ internal class E2eIndexWriter(
             append("{")
             append("\"id\":").append(quote(suite.id)).append(",")
             append("\"name\":").append(quote(suite.name)).append(",")
-            append("\"accessor\":").append(quote(suite.accessor))
+            append("\"accessor\":").append(quote(suite.accessor)).append(",")
+            append("\"tests\":[")
+            suite.tests.forEachIndexed { testIndex, test ->
+                if (testIndex > 0) append(",")
+                append("{")
+                append("\"id\":").append(quote(test.id)).append(",")
+                append("\"name\":").append(quote(test.name)).append(",")
+                append("\"driver\":").append(quote(test.driver.id))
+                append("}")
+            }
+            append("]")
             append("}")
         }
         append("],")

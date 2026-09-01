@@ -1,12 +1,7 @@
 package dev.vibeported.mc.e2e.orchestrator
 
-import dev.vibeported.mc.e2e.E2eAssertionError
+import dev.vibeported.mc.e2e.E2eIndex
 import dev.vibeported.mc.e2e.NodeId
-import dev.vibeported.mc.e2e.SuiteDescriptor
-import dev.vibeported.mc.e2e.TestDescriptor
-import dev.vibeported.mc.e2e.node.Facilities
-import dev.vibeported.mc.e2e.node.NodeBlockScope
-import dev.vibeported.mc.e2e.node.TableRegistry
 import dev.vibeported.mc.e2e.report.BlockRecord
 import dev.vibeported.mc.e2e.report.LogLine
 import dev.vibeported.mc.e2e.report.Outcome
@@ -14,7 +9,6 @@ import dev.vibeported.mc.e2e.report.RunReport
 import dev.vibeported.mc.e2e.report.TestReport
 import dev.vibeported.mc.e2e.rpc.Cancel
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
-import dev.vibeported.mc.e2e.rpc.JsonValueCodec
 import dev.vibeported.mc.e2e.rpc.Payload
 import dev.vibeported.mc.e2e.rpc.RemoteFailure
 import dev.vibeported.mc.e2e.rpc.RemoteInvocationException
@@ -22,7 +16,6 @@ import dev.vibeported.mc.e2e.rpc.Request
 import dev.vibeported.mc.e2e.rpc.RpcPeer
 import dev.vibeported.mc.e2e.rpc.SharedGet
 import dev.vibeported.mc.e2e.rpc.SharedSet
-import dev.vibeported.mc.e2e.rpc.ValueCodec
 import dev.vibeported.mc.e2e.rpc.toRemoteFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -31,17 +24,18 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Runs tests, owns the shared state, and is the only node that sees the whole run.
+ * Owns the shared state, relays every block invocation, and is the only party that sees the whole
+ * run.
  *
- * Every block invocation and every shared read or write passes through here, including ones raised
- * on another node. That is what lets a single report interleave blocks and log lines from all of
- * them against one clock.
+ * It runs no test code itself, and cannot: the lifted block bodies live in a mod jar compiled
+ * against Minecraft, while this is a plain JVM with no game on its classpath. So each test driver is
+ * dispatched to the server node like any other block, and everything the driver then asks for comes
+ * back through here -- which is what gives one report a single ordering over two game processes, and
+ * what lets a server block hand work to a client that it has no connection to.
  */
 public class Orchestrator(
     private val peer: RpcPeer,
-    private val registry: TableRegistry,
-    private val facilities: Facilities = Facilities.EMPTY,
-    private val codec: ValueCodec = JsonValueCodec(),
+    private val index: E2eIndex,
 ) {
     private val shared = SharedStore()
     private val logs = CopyOnWriteArrayList<LogLine>()
@@ -56,15 +50,16 @@ public class Orchestrator(
         return peer.start(scope)
     }
 
+    public fun tests(): List<Pair<E2eIndex.SuiteEntry, E2eIndex.TestEntry>> =
+        index.files.flatMap { file -> file.suites.flatMap { suite -> suite.tests.map { suite to it } } }
+
     public suspend fun runAll(): RunReport {
         val startedAt = System.currentTimeMillis()
-        val reports = registry.suites().flatMap { suite ->
-            suite.tests.map { runTest(suite, it) }
-        }
+        val reports = tests().map { (suite, test) -> runTest(suite, test) }
         return RunReport(reports, startedAt, System.currentTimeMillis() - startedAt)
     }
 
-    public suspend fun runTest(suite: SuiteDescriptor, test: TestDescriptor): TestReport {
+    public suspend fun runTest(suite: E2eIndex.SuiteEntry, test: E2eIndex.TestEntry): TestReport {
         val runId = "${test.id}#${runCounter.incrementAndGet()}"
         logs.clear()
         blocks.clear()
@@ -72,10 +67,7 @@ public class Orchestrator(
         var failure: RemoteFailure? = null
 
         try {
-            // The driver is a block like any other; it just happens to target the orchestrator.
-            route(InvokeBlock(runId, test.driver, NodeId.ORCHESTRATOR))
-        } catch (assertion: E2eAssertionError) {
-            failure = assertion.toRemoteFailure(NodeId.ORCHESTRATOR)
+            route(InvokeBlock(runId, test.driver, NodeId.SERVER))
         } catch (remote: RemoteInvocationException) {
             failure = remote.failure
         } catch (error: Throwable) {
@@ -101,7 +93,7 @@ public class Orchestrator(
         )
     }
 
-    /** Single entry point for every payload, whether it arrived over RPC or from our own driver. */
+    /** Single entry point for every payload, whether it arrived over the wire or from [runTest]. */
     private suspend fun route(payload: Payload): JsonElement? = when (payload) {
         is SharedGet -> shared.get(payload.runId, payload.id)
         is SharedSet -> {
@@ -117,10 +109,9 @@ public class Orchestrator(
         val startedAt = System.currentTimeMillis()
         var outcome = Outcome.PASSED
         try {
-            return if (payload.target == peer.self) runHere(payload) else peer.call(payload.target, payload)
+            return peer.call(payload.target, payload)
         } catch (failure: Throwable) {
             outcome = when {
-                failure is E2eAssertionError -> Outcome.FAILED
                 failure is RemoteInvocationException && failure.failure.assertion -> Outcome.FAILED
                 else -> Outcome.ERROR
             }
@@ -134,21 +125,5 @@ public class Orchestrator(
                 outcome = outcome,
             )
         }
-    }
-
-    private suspend fun runHere(payload: InvokeBlock): JsonElement? {
-        val table = registry.tableFor(payload.block)
-        val scope = NodeBlockScope(
-            self = peer.self,
-            runId = payload.runId,
-            currentBlock = payload.block,
-            facilities = facilities,
-            codec = codec,
-            emitLog = { logs += LogLine(it.from, it.block, it.atMillis, it.message) },
-            // No round trip: we are the orchestrator, so our driver calls straight into route().
-            toOrchestrator = ::route,
-        )
-        table.invoke(payload.block.value, scope)
-        return null
     }
 }

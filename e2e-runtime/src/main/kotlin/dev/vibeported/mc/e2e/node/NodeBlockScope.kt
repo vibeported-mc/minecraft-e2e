@@ -59,4 +59,6 @@ internal class NodeBlockScope(
     }
 
     override fun <T : Any> facility(type: KClass<T>): T = facilities.get(type)
+
+    override val clientIndex: Int get() = self.index
 }

@@ -47,11 +47,12 @@ public class SuiteBuilder internal constructor(
  *
  * [body] is lifted out of its enclosing closure at compile time, so it may not reference anything
  * from around it except `shared` values -- a captured local would not exist on the server.
- * Pass [id] to pin this block's stable id when renaming the test would otherwise churn it.
+ * Its receiver is [ServerScope], so the client side of the game is not merely discouraged here, it
+ * is unnameable. Pass [id] to pin this block's stable id when renaming the test would churn it.
  */
 public suspend fun E2eBlockScope.server(
     id: String? = null,
-    body: suspend NodeScope.() -> Unit,
+    body: suspend ServerScope.() -> Unit,
 ): Unit = throw E2ePluginNotAppliedException("server { }")
 
 /**
@@ -65,7 +66,7 @@ public suspend fun E2eBlockScope.server(
 public suspend fun E2eBlockScope.client(
     index: Int = 0,
     id: String? = null,
-    body: suspend NodeScope.() -> Unit,
+    body: suspend ClientScope.() -> Unit,
 ): Unit = throw E2ePluginNotAppliedException("client { }")
 
 /**

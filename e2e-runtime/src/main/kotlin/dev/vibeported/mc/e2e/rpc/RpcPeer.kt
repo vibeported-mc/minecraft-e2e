@@ -59,6 +59,8 @@ public class RpcPeer(
                 is Request -> handleRequest(this, envelope)
                 is Response -> pending.remove(envelope.callId)?.complete(envelope)
                 is Event -> onEvent?.invoke(envelope)
+                // Identity is settled by the hub as the socket is accepted; nothing to do here.
+                is Hello -> Unit
             }
         }
     }

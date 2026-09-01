@@ -1,7 +1,5 @@
 package dev.vibeported.mc.e2e.plugin
 
-import dev.vibeported.mc.e2e.node.TableRegistry
-import dev.vibeported.mc.e2e.cluster.LocalCluster
 import dev.vibeported.mc.e2e.report.Outcome
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -102,10 +100,8 @@ class TransformTest {
         val result = E2eCompilation(workingDir).compile("Suite.kt" to suiteSource)
         assertTrue(result.succeeded, result.messages)
 
-        val registry = TableRegistry(result.index(), result.classLoader)
-
         val report = runBlocking {
-            val cluster = LocalCluster.start(scope = this, clients = 1, registry = registry)
+            val cluster = InProcessCluster.start(this, result.index(), result.classLoader)
             try {
                 cluster.runAll()
             } finally {
@@ -118,8 +114,10 @@ class TransformTest {
         assertEquals("movement", test.suiteName)
         assertEquals("block moved", test.testName)
 
+        // The orchestrator runs nothing itself: it has no game on its classpath, so even the
+        // driver is dispatched to the server.
         assertEquals(
-            setOf("orchestrator", "server", "client[0]"),
+            setOf("server", "client[0]"),
             test.blocks.map { it.node.toString() }.toSet(),
         )
     }
@@ -150,11 +148,7 @@ class TransformTest {
         assertTrue(result.succeeded, result.messages)
 
         val report = runBlocking {
-            val cluster = LocalCluster.start(
-                scope = this,
-                clients = 1,
-                registry = TableRegistry(result.index(), result.classLoader),
-            )
+            val cluster = InProcessCluster.start(this, result.index(), result.classLoader)
             try {
                 cluster.runAll()
             } finally {

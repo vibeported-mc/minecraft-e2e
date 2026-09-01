@@ -1,0 +1,23 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "e2e"
+version = "0.1.0"
+displayName = "Minecraft E2E"
+description = '''Runs orchestrated end-to-end tests across a real server and client.'''
+
+[[dependencies.e2e]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.2,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.e2e]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.2,)"
+ordering = "NONE"
+side = "BOTH"

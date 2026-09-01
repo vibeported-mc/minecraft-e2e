@@ -39,13 +39,28 @@ public data class E2eIndex(
         public val blocks: List<BlockEntry> = emptyList(),
     )
 
-    /** A top-level suite property, reachable as a static getter on the facade class. */
+    /**
+     * A top-level suite property, reachable as a static getter on the facade class.
+     *
+     * The tests are listed here rather than recovered by running the builder, because the
+     * orchestrator is a plain JVM with no Minecraft on its classpath and could not load a test mod
+     * class if it wanted to. Planning a run therefore needs nothing but this file.
+     */
     @Serializable
     public data class SuiteEntry(
         public val id: String,
         public val name: String,
         /** JVM getter name on the facade class, e.g. `getMovement`. */
         public val accessor: String,
+        public val tests: List<TestEntry> = emptyList(),
+    )
+
+    @Serializable
+    public data class TestEntry(
+        public val id: String,
+        public val name: String,
+        /** The block that drives this test. It runs on the server node. */
+        public val driver: BlockId,
     )
 
     @Serializable

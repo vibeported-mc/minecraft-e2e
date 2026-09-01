@@ -2,6 +2,7 @@ package dev.vibeported.mc.e2e.rpc
 
 import dev.vibeported.mc.e2e.BlockId
 import dev.vibeported.mc.e2e.NodeId
+import dev.vibeported.mc.e2e.NodeRole
 import dev.vibeported.mc.e2e.SharedId
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -51,6 +52,18 @@ public data class Cancel(public val callId: Long) : Payload
 public sealed interface Envelope {
     public val to: NodeId
 }
+
+/**
+ * The first frame a node sends, naming itself.
+ *
+ * The orchestrator accepts a socket before it can know which process dialled in, so identity has to
+ * arrive in band.
+ */
+@Serializable
+public data class Hello(
+    public val from: NodeId,
+    override val to: NodeId = NodeId(NodeRole.ORCHESTRATOR),
+) : Envelope
 
 @Serializable
 public data class Request(

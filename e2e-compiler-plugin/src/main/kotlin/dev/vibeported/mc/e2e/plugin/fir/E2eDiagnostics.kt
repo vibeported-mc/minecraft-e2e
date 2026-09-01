@@ -33,6 +33,9 @@ object E2eDiagnostics : KtDiagnosticsContainer() {
 
     val E2E_BLOCK_IN_NESTED_LAMBDA: KtDiagnosticFactory0 by error0<KtElement>()
 
+    /** Reading a shared value is a suspending call, so it cannot happen in a lambda that is not inlined. */
+    val E2E_SHARED_IN_NESTED_LAMBDA: KtDiagnosticFactory0 by error0<KtElement>()
+
     val E2E_DUPLICATE_NAME: KtDiagnosticFactory1<String> by error1<KtElement, String>()
 
     override fun getRendererFactory(): BaseDiagnosticRendererFactory = E2eErrorMessages
@@ -67,6 +70,12 @@ object E2eErrorMessages : BaseDiagnosticRendererFactory() {
             E2eDiagnostics.E2E_BLOCK_IN_NESTED_LAMBDA,
             "A server/client block cannot be declared inside another lambda: its stable id would " +
                 "depend on how many times that lambda ran.",
+        )
+        map.put(
+            E2eDiagnostics.E2E_SHARED_IN_NESTED_LAMBDA,
+            "A shared value cannot be read inside this lambda, because reading one is a suspending " +
+                "call to the orchestrator and this lambda is not inlined into the block. Read it " +
+                "into a local in the block first, and use that local here.",
         )
         map.put(
             E2eDiagnostics.E2E_DUPLICATE_NAME,

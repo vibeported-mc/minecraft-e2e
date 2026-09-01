@@ -27,8 +27,11 @@ class DiagnosticsTest {
             import dev.vibeported.mc.e2e.server
             import dev.vibeported.mc.e2e.shared
             import dev.vibeported.mc.e2e.suite
-            import dev.vibeported.mc.e2e.NodeScope
-            import dev.vibeported.mc.e2e.world.BlockPos
+            import dev.vibeported.mc.e2e.ServerScope
+            import kotlinx.serialization.Serializable
+
+            @Serializable
+            data class BlockPos(val x: Int, val y: Int, val z: Int)
 
             $body
         """.trimIndent()
@@ -179,7 +182,7 @@ class DiagnosticsTest {
             """
             val s = suite("s") {
                 e2e("t") {
-                    val body: suspend NodeScope.() -> Unit = { log("x") }
+                    val body: suspend ServerScope.() -> Unit = { log("x") }
                     server(body = body)
                 }
             }
@@ -256,5 +259,46 @@ class DiagnosticsTest {
 
         assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
         assertTrue(result.messages.contains("declared twice"), result.messages)
+    }
+
+    @Test
+    fun `a shared read inside a lambda that is not inlined is rejected`() {
+        val result = compile(
+            """
+            fun runLater(action: () -> Int): Int = action()
+
+            val s = suite("s") {
+                e2e("t") {
+                    var pos by shared<BlockPos>()
+                    server {
+                        pos = BlockPos(1, 2, 3)
+                        runLater { pos.x }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
+        assertTrue(result.messages.contains("Read it into a local in the block first"), result.messages)
+    }
+
+    @Test
+    fun `a shared read inside an inline lambda is fine`() {
+        val result = compile(
+            """
+            val s = suite("s") {
+                e2e("t") {
+                    var pos by shared<BlockPos>()
+                    server {
+                        pos = BlockPos(1, 2, 3)
+                        assertThat { pos.x == 1 }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(result.succeeded, result.messages)
     }
 }

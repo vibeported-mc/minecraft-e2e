@@ -18,6 +18,7 @@ import org.jetbrains.kotlin.fir.expressions.FirVariableAssignment
 import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.expressions.toResolvedCallableSymbol
 import org.jetbrains.kotlin.fir.references.toResolvedVariableSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirValueParameterSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirVariableSymbol
@@ -159,9 +160,20 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             ?: return
 
         val declaredInside = collectDeclaredSymbols(lambda)
+        val notInlined = collectNotInlinedLambdas(lambda)
 
         lambda.body?.accept(object : FirVisitorVoid() {
+            /** How many lambdas we are inside of that will not be inlined into this block. */
+            private var insideForeignLambda = 0
+
             override fun visitElement(element: FirElement) = element.acceptChildren(this)
+
+            override fun visitAnonymousFunction(anonymousFunction: FirAnonymousFunction) {
+                val foreign = anonymousFunction in notInlined
+                if (foreign) insideForeignLambda++
+                anonymousFunction.acceptChildren(this)
+                if (foreign) insideForeignLambda--
+            }
 
             override fun visitPropertyAccessExpression(propertyAccessExpression: FirPropertyAccessExpression) {
                 inspect(propertyAccessExpression, propertyAccessExpression.calleeReference.toResolvedVariableSymbol())
@@ -179,7 +191,12 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             private fun inspect(at: FirElement, symbol: FirVariableSymbol<*>?) {
                 if (symbol == null || symbol in declaredInside) return
                 if (!symbol.isLocalToEnclosingCode()) return
-                if (symbol.isSharedDelegate()) return
+                if (symbol.isSharedDelegate()) {
+                    if (insideForeignLambda > 0) {
+                        reporter.reportOn(at.source, E2eDiagnostics.E2E_SHARED_IN_NESTED_LAMBDA)
+                    }
+                    return
+                }
                 reporter.reportOn(
                     at.source,
                     E2eDiagnostics.E2E_ILLEGAL_CAPTURE,
@@ -187,6 +204,39 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
                 )
             }
         })
+    }
+
+    /**
+     * The lambdas inside [lambda] that will not be inlined into it.
+     *
+     * Reading a shared value compiles to a suspending call, which is fine in a lambda that is
+     * inlined here and impossible in one that becomes its own function. Inlining is decided by the
+     * callee and the parameter it was passed to, not by anything on the lambda itself.
+     *
+     * A nested `server`/`client` body is not counted: it is a block in its own right, lifted
+     * separately and checked on its own pass, so a shared read in one is perfectly legal.
+     */
+    private fun collectNotInlinedLambdas(lambda: FirAnonymousFunction): Set<FirAnonymousFunction> {
+        val notInlined = mutableSetOf<FirAnonymousFunction>()
+        lambda.body?.accept(object : FirVisitorVoid() {
+            override fun visitElement(element: FirElement) = element.acceptChildren(this)
+
+            override fun visitFunctionCall(functionCall: FirFunctionCall) {
+                val callee = functionCall.toResolvedCallableSymbol()
+                val isBlock = callee?.callableId in E2eCallables.BLOCK_BODY_OWNERS
+                val calleeIsInline = (callee as? FirNamedFunctionSymbol)?.resolvedStatus?.isInline == true
+
+                functionCall.resolvedArgumentMapping?.forEach { (argument, parameter) ->
+                    val nested = (argument as? FirAnonymousFunctionExpression)?.anonymousFunction
+                        ?: return@forEach
+                    if (isBlock) return@forEach
+                    val inlined = calleeIsInline && !parameter.isNoinline && !parameter.isCrossinline
+                    if (!inlined) notInlined += nested
+                }
+                functionCall.acceptChildren(this)
+            }
+        })
+        return notInlined
     }
 
     /** Every value declared within [lambda], including inside nested lambdas of its own. */

@@ -1,25 +1,22 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
+    kotlin("jvm") version "2.4.10"
     `java-gradle-plugin`
 }
 
-// The compiler-plugin coordinates the Gradle plugin resolves at runtime come from this build,
-// so a version bump cannot leave the published plugin pointing at a stale artifact.
-val coordinatesRoot = layout.buildDirectory.dir("generated/coordinates")
-
-val pluginCoordinates by tasks.registering(WriteProperties::class) {
-    // Sits beside E2eGradlePlugin so it can be read with a package-relative getResourceAsStream.
-    destinationFile = coordinatesRoot.map { it.file("dev/vibeported/mc/e2e/gradle/coordinates.properties") }
-    property("group", providers.provider { project.group.toString() })
-    property("version", providers.provider { project.version.toString() })
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
 }
 
-sourceSets.main {
-    resources.srcDir(pluginCoordinates.map { coordinatesRoot })
+tasks.withType<KotlinCompile>().configureEach {
+    compilerOptions.jvmTarget = JvmTarget.JVM_21
 }
 
 dependencies {
-    compileOnly(libs.kotlin.gradle.plugin.api)
-    implementation(libs.kotlin.gradle.plugin)
+    // ModDevGradle registers the Minecraft runs this plugin harvests launch commands from.
+    compileOnly("net.neoforged:moddev-gradle:2.0.144")
 }
 
 gradlePlugin {
@@ -28,7 +25,7 @@ gradlePlugin {
             id = "dev.vibeported.mc.e2e"
             implementationClass = "dev.vibeported.mc.e2e.gradle.E2eGradlePlugin"
             displayName = "Minecraft E2E"
-            description = "Lifts e2e server/client blocks into a stable dispatch table and rewrites shared state into RPC."
+            description = "Runs an orchestrated NeoForge client and server pair against a compiled e2e test mod."
         }
     }
 }
