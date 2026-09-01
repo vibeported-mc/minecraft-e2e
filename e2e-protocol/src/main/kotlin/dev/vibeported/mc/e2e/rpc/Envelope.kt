@@ -24,6 +24,13 @@ public data class InvokeBlock(
     public val block: BlockId,
     /** The node that should actually run it. */
     public val target: NodeId,
+    /**
+     * The name of the test this block belongs to.
+     *
+     * Carried rather than parsed back out of the block id: a node has things to file under the test
+     * it is running -- screenshots, for one -- and the id is a path whose shape is not a promise.
+     */
+    public val test: String = "",
 ) : Payload
 
 /**
@@ -177,4 +184,12 @@ public data class RemoteFailure(
     public val assertion: Boolean = false,
     public val node: NodeId? = null,
     public val block: BlockId? = null,
+    /**
+     * A picture of the client at the moment it failed, if one could be taken.
+     *
+     * The cheapest evidence there is for the failures that are hardest to read: a message saying a
+     * slot was empty is a puzzle, and the same message beside a screenshot of an inventory usually
+     * is not.
+     */
+    public val screenshot: String? = null,
 )

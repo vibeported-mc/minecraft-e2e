@@ -13,6 +13,7 @@ import dev.vibeported.mc.e2e.giveItem
 import dev.vibeported.mc.e2e.isAlive
 import dev.vibeported.mc.e2e.lookAt
 import dev.vibeported.mc.e2e.lookAtPlayer
+import dev.vibeported.mc.e2e.makeScreenshot
 import dev.vibeported.mc.e2e.parallel
 import dev.vibeported.mc.e2e.pixelsPerSecond
 import dev.vibeported.mc.e2e.playerInventory
@@ -93,6 +94,7 @@ val blocks = suite("blocks") {
                 log("alex is at ${alexAt.get()}")
                 lookAtPlayer("alex")
                 delay(HOLD)
+                makeScreenshot("steve looking at alex")
             }
 
             client("alex") {
@@ -112,6 +114,7 @@ val blocks = suite("blocks") {
                 log("steve is at ${steveAt.get()}")
                 lookAtPlayer("steve")
                 delay(HOLD)
+                makeScreenshot("alex looking at steve")
             }
         }
 
@@ -180,6 +183,7 @@ val blocks = suite("blocks") {
                 log("alex is holding ${alexHolds.get()}")
                 lookAtPlayer("alex")
                 delay(HOLD)
+                makeScreenshot("steve armed, looking at alex")
             }
 
             client("alex") {
@@ -205,6 +209,7 @@ val blocks = suite("blocks") {
                 log("steve is holding ${steveHolds.get()}")
                 lookAtPlayer("steve")
                 delay(HOLD)
+                makeScreenshot("alex armed, looking at steve")
             }
         }
 
@@ -273,10 +278,18 @@ val blocks = suite("blocks") {
             assertPlayerDead("alex")
         }
 
-        // Long enough to watch the aftermath rather than have the window vanish on the last tick.
-        // Nothing to look at by now: alex is face down and staring at a death screen.
-        client("steve") {
-            delay(HOLD)
+        // Long enough to watch the aftermath rather than have the window vanish on the last tick,
+        // and one shot each: the same moment from the two ends of a sword.
+        parallel {
+            client("steve") {
+                delay(HOLD)
+                makeScreenshot("me stronk")
+            }
+
+            client("alex") {
+                delay(HOLD)
+                makeScreenshot("I was wrong")
+            }
         }
     }
 }

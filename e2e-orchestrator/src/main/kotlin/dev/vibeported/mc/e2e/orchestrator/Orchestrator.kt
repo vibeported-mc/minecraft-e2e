@@ -167,7 +167,7 @@ public class Orchestrator(
     private suspend fun dispatch(runId: String, test: E2eIndex.TestEntry, block: BlockId) {
         val entry = blockEntries[block]
             ?: error("The index lists step `$block` for `${test.id}` but has no entry for it")
-        route(InvokeBlock(runId, block, entry.target()))
+        route(InvokeBlock(runId, block, entry.target(), test.name))
     }
 
     private fun E2eIndex.BlockEntry.target(): NodeId = when (role) {

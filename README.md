@@ -151,6 +151,79 @@ Two consequences worth knowing:
 - **Blocking the thread blocks the game.** `Thread.sleep` or a busy-wait inside a block stalls the
   server or freezes the client. `delay` is the one to reach for.
 
+## Driving the client
+
+A client is an instrument, not just a viewer. Input enters at the private methods the GLFW callbacks
+call, so nothing downstream can tell the difference: key mappings are clicked, `handleKeybinds` runs,
+screens get their events, and a mod listening on the way is listening on the same way.
+
+```kotlin
+client("steve") {
+    press(Key.SPACE)                  // and keyDown / keyUp / type
+    click(MouseButton.RIGHT)          // and mouseDown / mouseUp / scroll
+    moveMouseTo(x, y, over = 400.milliseconds)   // or speed = pixelsPerSecond(500.0)
+
+    breakBlock(pos)                   // holds attack until the block is gone
+    useBlock(pos)
+    attack()                          // one swing, so a test can space them itself
+    chat("Alex! Leave the gold alone.")
+}
+```
+
+Calling `MultiPlayerGameMode` directly would send the same packets while skipping every one of those
+hooks, which is the part a test of a mod wants exercised.
+
+**Real input is blocked** on an automated client, because it shares a keyboard with whoever is
+watching it. `blockInput(false)` hands the window back when you want to drive it yourself.
+
+Mouse movement takes time on purpose: a move is spread over ticks along an eased path, so a drag is
+something you can watch and anything sampling the mouse per frame sees a plausible track.
+
+### Screens and the inventory
+
+```kotlin
+client("steve") {
+    playerInventory {                        // presses the inventory key; waits for the screen
+        moveToSlot(InventorySlot.INV_1_1, pixelsPerSecond(500.0))
+        click()                              // the sword is on the cursor
+        moveToSlot(selectedHotbar, pixelsPerSecond(500.0))
+        click()                              // and it lands
+
+        swapSlot(INV_1_2, OFFHAND)           // those four calls, plus the wait
+        assertSlot("the shield is in the offhand", OFFHAND) { it.item == Items.SHIELD }
+    }
+}
+```
+
+`awaitScreen<T>()` waits for a screen by class and says what was open instead when it times out.
+Moving an item is **click, move, click**: holding the button is Minecraft's quick-craft gesture,
+which spreads a carried stack over the slots it crosses and puts a single item back where it began.
+
+Slots are named, never numbered, and carry both index spaces -- a menu counts from its crafting grid
+and an `Inventory` counts from the hotbar -- so `INV_3_9` means the same square in a `server { }`
+block handing out gear as in the `client { }` block that drags it.
+
+### Screenshots
+
+```kotlin
+client("alex") { makeScreenshot("I was wrong") }
+```
+
+lands in `build/reports/e2e/screenshots/<client>/<test>/<n>-<name>.jpg`, numbered in the order the
+test took them and escaped on the way to the file system. It returns only once the file exists: the
+capture is a GPU read-back that lands a few frames later, and a test that carried on regardless
+would be photographing a scene it had already changed.
+
+**A failing client block is photographed automatically**, and the report names the file under the
+failure. A message saying a slot was empty is a puzzle; the same message beside a picture of the
+inventory usually is not.
+
+### Windows
+
+`mcE2E { clientWidth = 1280; clientHeight = 720 }` -- Minecraft opens at 854x480, which is too small
+to watch. `tileWindows = true` additionally has each client place its own window, using the ordinal
+the orchestrator passes and the monitor size only the client can know.
+
 ## Who talks to whom
 
 ```
@@ -246,5 +319,7 @@ module graph, and two jars cannot both export one package to it.
 - **Publishing.** The Gradle plugin resolves the compiler plugin and orchestrator from configurations
   that default to published coordinates; nothing is published yet, so the example points them at its
   own projects.
+- **An overlay on the client.** A test drives a client invisibly: there is no cursor to see and no
+  sign of which window is which. Planned, not built.
 - **Block return values.** `dispatch` returns nothing; blocks communicate only through `shared`.
 - **World fixtures.** The server run is seeded with a flat world and an accepted EULA, nothing more.

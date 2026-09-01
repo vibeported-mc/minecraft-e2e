@@ -20,6 +20,7 @@ public object ConsoleReporter {
             test.failure?.let { failure ->
                 appendLine("    ${if (failure.assertion) "assertion failed" else failure.type}: ${failure.message}")
                 failure.node?.let { appendLine("    on: $it") }
+                failure.screenshot?.let { appendLine("    screenshot: $it") }
                 if (!failure.assertion) {
                     failure.stack.lineSequence().take(12).forEach { appendLine("      $it") }
                 }

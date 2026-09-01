@@ -53,6 +53,7 @@ internal class NodeBlockScope(
     override val self: NodeId,
     override val runId: String,
     private val currentBlock: BlockId,
+    override val testName: String,
     private val server: MinecraftServer?,
     private val client: Minecraft?,
     private val codec: ValueCodec,

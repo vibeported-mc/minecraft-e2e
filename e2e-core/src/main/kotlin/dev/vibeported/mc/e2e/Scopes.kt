@@ -32,6 +32,9 @@ public interface E2eBlockScope {
     /** Identifies the one test run this block belongs to; used to correlate logs and shared state. */
     public val runId: String
 
+    /** The name of the test being run, as written in the suite. What artefacts are filed under. */
+    public val testName: String
+
     /** Appends a line to this node's captured log, which the report interleaves by time. */
     public fun log(message: String)
 

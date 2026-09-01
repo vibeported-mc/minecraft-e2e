@@ -15,7 +15,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -196,7 +198,10 @@ public object E2eMain {
             val template = plan.clients.firstOrNull()
                 ?: error("The launch plan has no client run to start clients from")
 
-            clients.forEachIndexed { index, name ->
+            // Started together rather than one after another. A client takes the better part of a
+            // minute to reach a world, and waiting out each one in turn made the cost of a second
+            // client the same as the cost of the first.
+            val started = clients.mapIndexed { index, name ->
                 println("e2e: starting client `$name`")
                 val gameDir = File(File(template.workingDir).parentFile, "e2eClient-$name")
                 seedClient(gameDir)
@@ -220,8 +225,16 @@ public object E2eMain {
                     ),
                 )
                 processes += process
-                awaitNode(hub, NodeId.client(name), process)
-                println("e2e: client `$name` is up")
+                name to process
+            }
+
+            coroutineScope {
+                started.forEach { (name, process) ->
+                    launch {
+                        awaitNode(hub, NodeId.client(name), process)
+                        println("e2e: client `$name` is up")
+                    }
+                }
             }
         }
 
@@ -290,6 +303,9 @@ public object E2eMain {
             // Read by the node that waits for a player to arrive or turn, which is the only party
             // that can see whether the effect landed.
             "-De2e.action.timeout.seconds=${plan.actionTimeoutSeconds}",
+            // Where a client files its screenshots, so they land beside the report rather than in
+            // whatever directory that game process happens to be running in.
+            "-De2e.report.dir=${File(plan.reportDir).absolutePath}",
         )
 
         /**

@@ -4,14 +4,17 @@ import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.mc.McValueCodec
 import dev.vibeported.mc.e2e.mc.TickClock
 import dev.vibeported.mc.e2e.mc.applyPlayerAction
+import dev.vibeported.mc.e2e.mc.Screenshots
 import dev.vibeported.mc.e2e.mc.awaitPlayerState
 import dev.vibeported.mc.e2e.rpc.Event
 import dev.vibeported.mc.e2e.rpc.AwaitPlayer
 import dev.vibeported.mc.e2e.rpc.ControlPlayer
 import dev.vibeported.mc.e2e.rpc.InvokeBlock
+import dev.vibeported.mc.e2e.rpc.RemoteInvocationException
 import dev.vibeported.mc.e2e.rpc.Request
 import dev.vibeported.mc.e2e.rpc.RpcPeer
 import dev.vibeported.mc.e2e.rpc.ValueCodec
+import dev.vibeported.mc.e2e.rpc.toRemoteFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -88,12 +91,35 @@ public class NodeRunner(
         else -> error("Node $id has no handler for $payload")
     }
 
+    /**
+     * A picture of what the client was looking at when it gave up.
+     *
+     * Only a client has anything to photograph, and a capture that itself fails must not replace the
+     * failure being reported -- so anything going wrong here is swallowed and the original stands.
+     */
+    private suspend fun screenshotOfFailure(payload: InvokeBlock): String? {
+        val minecraft = client ?: return null
+        return try {
+            withContext(blockDispatcher) {
+                Screenshots.capture(
+                    minecraft = minecraft,
+                    client = id.name,
+                    test = payload.test,
+                    name = "failed - " + payload.block.value.substringAfterLast('/'),
+                ).absolutePath
+            }
+        } catch (ignored: Throwable) {
+            null
+        }
+    }
+
     private suspend fun runBlock(payload: InvokeBlock) {
         val table = registry.tableFor(payload.block)
         val scope = NodeBlockScope(
             self = id,
             runId = payload.runId,
             currentBlock = payload.block,
+            testName = payload.test,
             server = server,
             client = client,
             codec = codec,
@@ -106,8 +132,13 @@ public class NodeRunner(
 
         // The whole body runs on the game thread, which is what makes every Minecraft call in it
         // safe. Suspending inside it releases the thread, so the game keeps ticking meanwhile.
-        withContext(blockDispatcher) {
-            table.invoke(payload.block.value, scope)
+        try {
+            withContext(blockDispatcher) {
+                table.invoke(payload.block.value, scope)
+            }
+        } catch (failure: Throwable) {
+            val shot = screenshotOfFailure(payload) ?: throw failure
+            throw RemoteInvocationException(failure.toRemoteFailure(id).copy(screenshot = shot))
         }
     }
 }
