@@ -39,10 +39,12 @@ internal object WindowLayout {
         val originX = ((video.width() - columns * width) / 2).coerceAtLeast(0)
         val originY = ((video.height() - rows * height) / 2).coerceAtLeast(0)
 
-        GLFW.glfwSetWindowPos(
-            handle,
-            originX + (index % columns) * width,
-            originY + (index / columns) * height,
-        )
+        // Clamped, because a window whose title bar is off the screen cannot be dragged back on.
+        val x = (originX + (index % columns) * width)
+            .coerceIn(0, (video.width() - minecraft.window.width).coerceAtLeast(0))
+        val y = (originY + (index / columns) * height)
+            .coerceIn(0, (video.height() - minecraft.window.height).coerceAtLeast(0))
+
+        GLFW.glfwSetWindowPos(handle, x, y)
     }
 }

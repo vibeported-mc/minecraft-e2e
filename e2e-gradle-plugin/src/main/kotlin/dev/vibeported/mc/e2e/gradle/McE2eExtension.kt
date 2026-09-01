@@ -68,7 +68,11 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
     abstract val clientWidth: Property<Int>
     abstract val clientHeight: Property<Int>
 
-    /** Whether each client moves its window so that two of them do not land on top of each other. */
+    /**
+     * Whether each client moves its window so that two of them do not land in the same place.
+     *
+     * Off by default: a person watching a run generally wants to arrange the windows themselves.
+     */
     abstract val tileWindows: Property<Boolean>
 
     /**

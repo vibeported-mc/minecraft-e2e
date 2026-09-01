@@ -42,6 +42,11 @@ public data class LaunchPlan(
     /** Client window size. Minecraft's own default of 854x480 is too small to watch. */
     public val clientWidth: Int = 1280,
     public val clientHeight: Int = 720,
-    /** Whether each client moves its window so two of them do not land on top of each other. */
-    public val tileWindows: Boolean = true,
+    /**
+     * Whether each client moves its window so two of them do not land where the last one did.
+     *
+     * Off by default: a person watching a run wants to arrange the windows themselves, and a layout
+     * that guesses wrong is worse than no layout at all.
+     */
+    public val tileWindows: Boolean = false,
 )

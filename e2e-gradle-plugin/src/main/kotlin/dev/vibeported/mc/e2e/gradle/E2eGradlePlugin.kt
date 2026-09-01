@@ -43,7 +43,7 @@ class E2eGradlePlugin : Plugin<Project> {
             actionTimeoutSeconds.convention(10L)
             clientWidth.convention(1280)
             clientHeight.convention(720)
-            tileWindows.convention(true)
+            tileWindows.convention(false)
             javaVersion.convention(25)
             e2eModId.convention(modId.map { "${it}_e2e" }.orElse("e2e_tests"))
         }
@@ -180,6 +180,10 @@ class E2eGradlePlugin : Plugin<Project> {
             task.tileWindows.set(settings.tileWindows)
             task.planFile.set(planFile)
             task.dependsOn(compileSuites, generateMetadata, project.tasks.named(suites.processResourcesTaskName))
+            // The game runs off the runtime classpath, and a project on it is a jar somebody has to
+            // build. Compiling the suites only needs the class directories, so without this the run
+            // happily launches against whatever jar was lying there from last time.
+            task.dependsOn(suites.runtimeClasspath)
             task.dependsOn(project.tasks.matching { it.name.startsWith("prepare") && it.name.endsWith("Run") })
         }
 

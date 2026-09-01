@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.vibeported.mc.e2e.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ContainerScreenAccessor",
+    "InputConstantsMixin",
+    "KeyboardHandlerInvoker",
+    "KeyboardHandlerMixin",
+    "MinecraftMixin",
+    "MouseHandlerInvoker",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

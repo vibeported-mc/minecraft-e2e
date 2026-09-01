@@ -1,6 +1,7 @@
 package dev.vibeported.mc.e2e.mc
 
 import dev.vibeported.mc.e2e.DEFAULT_CLIENT
+import dev.vibeported.mc.e2e.input.InputGate
 import dev.vibeported.mc.e2e.protocol.NodeId
 import net.neoforged.bus.api.IEventBus
 import net.neoforged.fml.ModContainer
@@ -31,6 +32,10 @@ class E2eMod(eventBus: IEventBus, container: ModContainer) {
                     // The orchestrator names the client on the command line; the same name is
                     // the player's username, which is how a test addresses it.
                     val name = System.getProperty("e2e.node.name") ?: DEFAULT_CLIENT
+
+                    // From here the keyboard belongs to the tests. Installing it only for a test
+                    // client is what keeps an ordinary development client untouched by the mod.
+                    InputGate.install(true)
                     ClientNode.install(host, port, NodeId.client(name))
                 }
 
