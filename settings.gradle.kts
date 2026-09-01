@@ -28,8 +28,9 @@ dependencyResolutionManagement {
 rootProject.name = "minecraft-e2e"
 
 include(
-    ":e2e-api",
-    ":e2e-runtime",
+    ":e2e-protocol",
+    ":e2e-core",
+    ":e2e-orchestrator",
     ":e2e-mc",
     ":e2e-compiler-plugin",
 )

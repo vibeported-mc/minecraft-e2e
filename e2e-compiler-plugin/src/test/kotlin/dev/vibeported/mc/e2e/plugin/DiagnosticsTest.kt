@@ -301,4 +301,38 @@ class DiagnosticsTest {
 
         assertTrue(result.succeeded, result.messages)
     }
+
+    @Test
+    fun `a statement in a test body is rejected`() {
+        val result = compile(
+            """
+            val s = suite("s") {
+                e2e("t") {
+                    println("this would never run")
+                    server { log("x") }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
+        assertTrue(result.messages.contains("may only declare shared values"), result.messages)
+    }
+
+    @Test
+    fun `shared declarations and blocks are the whole of a legal test body`() {
+        val result = compile(
+            """
+            val s = suite("s") {
+                e2e("t") {
+                    var pos by shared<BlockPos>()
+                    server { pos = BlockPos(1, 2, 3) }
+                    client { assertThat { pos.x == 1 } }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(result.succeeded, result.messages)
+    }
 }

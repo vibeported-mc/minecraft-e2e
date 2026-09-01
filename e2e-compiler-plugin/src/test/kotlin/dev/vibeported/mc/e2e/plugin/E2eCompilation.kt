@@ -4,7 +4,7 @@ import com.tschuchort.compiletesting.JvmCompilationResult
 import com.tschuchort.compiletesting.KotlinCompilation
 import com.tschuchort.compiletesting.PluginOption
 import com.tschuchort.compiletesting.SourceFile
-import dev.vibeported.mc.e2e.E2eIndex
+import dev.vibeported.mc.e2e.protocol.E2eIndex
 import kotlinx.serialization.json.Json
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import java.io.File
@@ -35,7 +35,8 @@ class E2eCompilation(private val workingDir: File) {
                 )
             )
             inheritClassPath = true
-            jvmTarget = "21"
+            // Must match e2e-core, or inlining assertThat out of it is rejected.
+            jvmTarget = "25"
             messageOutputStream = System.out
         }
         return Result(compilation.compile(), indexDir)

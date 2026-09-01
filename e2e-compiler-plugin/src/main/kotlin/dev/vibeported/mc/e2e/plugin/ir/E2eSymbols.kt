@@ -24,18 +24,22 @@ import org.jetbrains.kotlin.name.Name
  */
 internal class E2eSymbols(private val pluginContext: IrPluginContext) {
 
-    private fun classOf(name: String): IrClassSymbol =
-        pluginContext.referenceClass(ClassId(PACKAGE, Name.identifier(name)))
-            ?: error("e2e: $PACKAGE.$name is not on the compile classpath; is e2e-api a dependency?")
+    private fun classOf(packageName: FqName, name: String): IrClassSymbol =
+        pluginContext.referenceClass(ClassId(packageName, Name.identifier(name)))
+            ?: error("e2e: $packageName.$name is not on the compile classpath; is e2e-core a dependency?")
 
-    val blockId: IrClassSymbol = classOf("BlockId")
-    val sharedId: IrClassSymbol = classOf("SharedId")
-    val nodeId: IrClassSymbol = classOf("NodeId")
-    val nodeRole: IrClassSymbol = classOf("NodeRole")
-    val blockScope: IrClassSymbol = classOf("BlockScope")
-    val e2eBlockScope: IrClassSymbol = classOf("E2eBlockScope")
-    val blockTable: IrClassSymbol = classOf("E2eBlockTable")
-    val noSuchBlock: IrClassSymbol = classOf("NoSuchBlockException")
+    // Ids travel on the wire, so they live in the protocol module. The two are kept in separate
+    // packages because a mod jar and a library jar cannot both export one package to the module
+    // graph FancyModLoader builds.
+    val blockId: IrClassSymbol = classOf(PROTOCOL, "BlockId")
+    val sharedId: IrClassSymbol = classOf(PROTOCOL, "SharedId")
+    val nodeId: IrClassSymbol = classOf(PROTOCOL, "NodeId")
+    val nodeRole: IrClassSymbol = classOf(PROTOCOL, "NodeRole")
+
+    val blockScope: IrClassSymbol = classOf(PACKAGE, "BlockScope")
+    val e2eBlockScope: IrClassSymbol = classOf(PACKAGE, "E2eBlockScope")
+    val blockTable: IrClassSymbol = classOf(PACKAGE, "E2eBlockTable")
+    val noSuchBlock: IrClassSymbol = classOf(PACKAGE, "NoSuchBlockException")
 
     val blockIdConstructor: IrConstructorSymbol = blockId.constructors.single()
     val sharedIdConstructor: IrConstructorSymbol = sharedId.constructors.single()
@@ -59,8 +63,9 @@ internal class E2eSymbols(private val pluginContext: IrPluginContext) {
         pluginContext.referenceFunctions(
             CallableId(ClassId(PACKAGE, Name.identifier("SuiteBuilder")), Name.identifier("e2e"))
         ).single { fn ->
-            // Members carry a dispatch receiver, so the three declared arguments make four.
-            fn.owner.parameters.size == 4
+            // Both overloads take three parameters once the dispatch receiver is counted, so arity
+            // cannot tell them apart. Only the plugin-facing one takes an id.
+            fn.owner.parameters.any { it.name.asString() == "id" }
         }
 
     fun nodeRoleEntry(name: String): IrEnumEntrySymbol =
@@ -73,5 +78,6 @@ internal class E2eSymbols(private val pluginContext: IrPluginContext) {
 
     private companion object {
         val PACKAGE = FqName("dev.vibeported.mc.e2e")
+        val PROTOCOL = FqName("dev.vibeported.mc.e2e.protocol")
     }
 }

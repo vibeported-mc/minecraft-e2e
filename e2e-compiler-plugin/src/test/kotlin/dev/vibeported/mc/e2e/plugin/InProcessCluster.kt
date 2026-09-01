@@ -1,8 +1,7 @@
 package dev.vibeported.mc.e2e.plugin
 
-import dev.vibeported.mc.e2e.E2eIndex
-import dev.vibeported.mc.e2e.NodeId
-import dev.vibeported.mc.e2e.node.Facilities
+import dev.vibeported.mc.e2e.protocol.E2eIndex
+import dev.vibeported.mc.e2e.protocol.NodeId
 import dev.vibeported.mc.e2e.node.NodeRunner
 import dev.vibeported.mc.e2e.node.TableRegistry
 import dev.vibeported.mc.e2e.orchestrator.Orchestrator
@@ -56,7 +55,10 @@ class InProcessCluster private constructor(
                     id = id,
                     peer = RpcPeer(hub.connect(id)),
                     registry = registry,
-                    facilities = Facilities.EMPTY,
+                    // No game here, so no game thread to run blocks on. These snippets only exercise
+                    // the generated table and the shared-value plumbing, never Minecraft itself.
+                    server = null,
+                    client = null,
                 )
             }
 

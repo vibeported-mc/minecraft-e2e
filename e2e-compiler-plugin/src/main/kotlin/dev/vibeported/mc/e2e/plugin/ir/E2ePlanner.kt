@@ -77,26 +77,18 @@ internal class E2ePlanner(
             report(call, "test body must be a lambda literal")
             return
         }
-        val testId = "${suite.id}/$name"
-        val driver = BlockPlan(
-            id = "$testId/driver",
-            role = BlockRole.ORCHESTRATOR,
-            clientIndex = 0,
-            parent = null,
-            testId = testId,
-            call = call,
-            lambda = body,
-        )
-        val test = TestPlan(id = testId, name = name, call = call, driver = driver)
+        val test = TestPlan(id = "${suite.id}/$name", name = name, call = call)
         suite.tests += test
 
-        planShared(test)
-        planNestedBlocks(test, driver)
+        planShared(test, body)
+        // The test body is declarative, so its blocks are the test: an ordered list of steps for the
+        // orchestrator to walk, rather than a body somebody has to run.
+        planBlocks(test, parent = null, prefix = test.id, lambda = body) { test.steps += it }
     }
 
-    /** Shared values may only be declared in a driver body, so one walk of it finds them all. */
-    private fun planShared(test: TestPlan) {
-        test.driver.lambda.body?.acceptChildrenVoid(object : IrVisitorVoid() {
+    /** Shared values may only be declared in a test body, so one walk of it finds them all. */
+    private fun planShared(test: TestPlan, body: IrSimpleFunction) {
+        body.body?.acceptChildrenVoid(object : IrVisitorVoid() {
             override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
 
             override fun visitLocalDelegatedProperty(declaration: IrLocalDelegatedProperty) {
@@ -125,10 +117,16 @@ internal class E2ePlanner(
      * a `forEach` would take an ordinal that depends on runtime data, and the whole value of these
      * ids is that they do not. Such a call is reported rather than silently mis-numbered.
      */
-    private fun planNestedBlocks(test: TestPlan, parent: BlockPlan) {
+    private fun planBlocks(
+        test: TestPlan,
+        parent: BlockPlan?,
+        prefix: String,
+        lambda: IrSimpleFunction,
+        collect: (BlockPlan) -> Unit,
+    ) {
         val ordinals = mutableMapOf<BlockRole, Int>()
 
-        parent.lambda.body?.acceptChildrenVoid(object : IrVisitorVoid() {
+        lambda.body?.acceptChildrenVoid(object : IrVisitorVoid() {
             override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
 
             override fun visitFunctionExpression(expression: IrFunctionExpression) {
@@ -165,7 +163,7 @@ internal class E2ePlanner(
                 val explicitId = expression.constArgument("id")
                 val label = role.name.lowercase()
                 val child = BlockPlan(
-                    id = explicitId?.let { "${parent.pathPrefix}/$it" } ?: "${parent.pathPrefix}/$label[$ordinal]",
+                    id = explicitId?.let { "$prefix/$it" } ?: "$prefix/$label[$ordinal]",
                     role = role,
                     clientIndex = clientIndex,
                     parent = parent,
@@ -173,8 +171,8 @@ internal class E2ePlanner(
                     call = expression,
                     lambda = body,
                 )
-                parent.children += child
-                planNestedBlocks(test, child)
+                collect(child)
+                planBlocks(test, child, child.id, body) { child.children += it }
             }
         })
     }

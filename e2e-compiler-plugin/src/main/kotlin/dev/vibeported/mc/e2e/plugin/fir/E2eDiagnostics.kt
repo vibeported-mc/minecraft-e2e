@@ -33,6 +33,9 @@ object E2eDiagnostics : KtDiagnosticsContainer() {
 
     val E2E_BLOCK_IN_NESTED_LAMBDA: KtDiagnosticFactory0 by error0<KtElement>()
 
+    /** A test body is a plan, not code: only shared declarations and blocks belong in it. */
+    val E2E_TEST_BODY_NOT_DECLARATIVE: KtDiagnosticFactory0 by error0<KtElement>()
+
     /** Reading a shared value is a suspending call, so it cannot happen in a lambda that is not inlined. */
     val E2E_SHARED_IN_NESTED_LAMBDA: KtDiagnosticFactory0 by error0<KtElement>()
 
@@ -70,6 +73,13 @@ object E2eErrorMessages : BaseDiagnosticRendererFactory() {
             E2eDiagnostics.E2E_BLOCK_IN_NESTED_LAMBDA,
             "A server/client block cannot be declared inside another lambda: its stable id would " +
                 "depend on how many times that lambda ran.",
+        )
+        map.put(
+            E2eDiagnostics.E2E_TEST_BODY_NOT_DECLARATIVE,
+            "An e2e test body may only declare shared values and call server/client blocks. It is " +
+                "never executed: the compiler reads the blocks out of it as an ordered list of " +
+                "steps for the orchestrator, so there is nowhere for this statement to run. Move " +
+                "it inside a server or client block.",
         )
         map.put(
             E2eDiagnostics.E2E_SHARED_IN_NESTED_LAMBDA,

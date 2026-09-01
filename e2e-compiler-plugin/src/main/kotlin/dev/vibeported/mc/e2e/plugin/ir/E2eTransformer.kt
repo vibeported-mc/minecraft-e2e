@@ -307,12 +307,13 @@ internal class E2eTransformer(
                 }
                 e2eCalls[expression]?.let { test ->
                     val builder = DeclarationIrBuilder(context, symbols.e2eWithId, expression.startOffset, expression.endOffset)
+                    // The body goes nowhere: it was declarative, and its blocks are already in the
+                    // table and listed as this test's steps in the index. Only the id survives.
                     return builder.irCall(symbols.e2eWithId).apply {
                         // 0 is the SuiteBuilder receiver, which the original call already carries.
                         arguments[0] = expression.arguments[0]
                         arguments[1] = expression.arguments[1]
                         arguments[2] = builder.irString(test.id)
-                        arguments[3] = blockId(builder, builder.irString(test.driver.id))
                     }
                 }
                 return super.visitCall(expression)
@@ -331,7 +332,6 @@ internal class E2eTransformer(
 
     private fun nodeId(builder: IrBuilderWithScope, block: BlockPlan): IrExpression {
         val roleName = when (block.role) {
-            BlockRole.ORCHESTRATOR -> "ORCHESTRATOR"
             BlockRole.SERVER -> "SERVER"
             BlockRole.CLIENT -> "CLIENT"
         }

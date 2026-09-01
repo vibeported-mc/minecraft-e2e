@@ -36,20 +36,15 @@ val e2ePlugin: Configuration by configurations.creating {
 }
 
 dependencies {
-    implementation(project(":e2e-api"))
-    implementation(project(":e2e-runtime"))
-
-    // Kotlin as a loaded mod. A dev run would have the stdlib on its classpath anyway, but a mod jar
-    // shipped to anyone else would not, and this is the version pairing that has to hold either way.
-    implementation(libs.kotlinforforge)
-
-    "testsImplementation"(project(":e2e-api"))
-    "testsImplementation"(sourceSets.main.get().output)
+    // Everything belongs to the suites: `main` has no sources here at all, and anything left on it
+    // would only put another directory in front of FancyModLoader to reject.
+    "testsImplementation"(project(":e2e-core"))
+    "testsImplementation"(libs.kotlinforforge)
 
     e2ePlugin(project(":e2e-compiler-plugin"))
 
     // What `runE2e` launches the orchestrator with.
-    "e2eOrchestrator"(project(":e2e-runtime"))
+    "e2eOrchestrator"(project(":e2e-orchestrator"))
 }
 
 neoForge {
@@ -59,19 +54,23 @@ neoForge {
     addModdingDependenciesTo(tests)
 
     mods {
-        create("e2e") { sourceSet(sourceSets.main.get()) }
         create("e2e_tests") { sourceSet(tests) }
     }
 
     runs {
         create("e2eServer") {
             server()
+            // The run classpath comes from one source set, and it has to be this one: the framework
+            // mod is a dependency of the suites, and FancyModLoader only finds it as a mod if its
+            // jar is on that classpath.
+            sourceSet = tests
             gameDirectory = layout.projectDirectory.dir("run/e2eServer")
             programArgument("--nogui")
         }
 
         create("e2eClient") {
             client()
+            sourceSet = tests
             gameDirectory = layout.projectDirectory.dir("run/e2eClient")
             // Vanilla joins the address on its own, which spares us reaching into ConnectScreen.
             programArguments.addAll("--quickPlayMultiplayer", "localhost:25565")
@@ -104,14 +103,25 @@ tasks.named<ProcessResources>("processTestsResources") {
 }
 
 /**
+ * Seeds both run directories with the settings an unattended run needs.
+ *
  * A dedicated server refuses to boot without an accepted EULA, and the defaults it would otherwise
  * write are wrong for a test run: a superflat world generates fast and is the same every time, and
  * a dev client has no session to authenticate with.
+ *
+ * The client needs one thing too. NeoForge shows an interactive screen when any mod loads with a
+ * warning and waits there for a click, which for an automated client is simply a hang -- and the
+ * warning is rarely even ours.
  */
-val seedE2eServerRunDir by tasks.registering {
+val seedE2eRunDirs by tasks.registering {
     val runDir = layout.projectDirectory.dir("run/e2eServer")
+    val clientDir = layout.projectDirectory.dir("run/e2eClient")
     outputs.dir(runDir)
+    outputs.dir(clientDir)
     doLast {
+        File(clientDir.asFile, "config").mkdirs()
+        File(clientDir.asFile, "config/neoforge-client.toml").writeText("showLoadWarnings = false" + System.lineSeparator())
+
         val dir = runDir.asFile
         dir.mkdirs()
         File(dir, "eula.txt").writeText("eula=true\n")
@@ -144,7 +154,7 @@ e2e {
 }
 
 tasks.named("runE2e") {
-    dependsOn(seedE2eServerRunDir, tasks.named("compileTestsKotlin"), tasks.named("processTestsResources"))
+    dependsOn(seedE2eRunDirs, tasks.named("compileTestsKotlin"), tasks.named("processTestsResources"))
 }
 
 tasks.named("harvestE2eLaunchPlan") {

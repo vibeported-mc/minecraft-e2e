@@ -106,6 +106,11 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
     init {
         // It reads other tasks, which is exactly what the configuration cache forbids.
         notCompatibleWithConfigurationCache("Reads the configuration of the ModDevGradle run tasks")
+
+        // The plan is derived from the run tasks, and Gradle cannot see those as inputs. Left to
+        // its own judgement this task goes up to date after the runs have changed underneath it,
+        // and hands the orchestrator a classpath describing a build that no longer exists.
+        outputs.upToDateWhen { false }
     }
 
     @TaskAction

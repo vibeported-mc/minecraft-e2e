@@ -52,12 +52,31 @@ class TransformTest {
 
         assertEquals(
             listOf(
-                "sample.SuiteKt:movement/block moved/driver",
                 "sample.SuiteKt:movement/block moved/server[0]",
                 "sample.SuiteKt:movement/block moved/server[0]/client[0]",
                 "sample.SuiteKt:movement/block moved/client[0]",
             ),
             file.blocks.map { it.id.value },
+        )
+    }
+
+    /**
+     * The test body never runs, so what the orchestrator needs from it is the order of its blocks.
+     * Only the top-level ones are steps; the nested client belongs to the server block that raises
+     * it, not to the test.
+     */
+    @Test
+    fun `a test is an ordered list of steps, with no driver`() {
+        val result = E2eCompilation(workingDir).compile("Suite.kt" to suiteSource)
+        assertTrue(result.succeeded, result.messages)
+
+        val test = result.index().files.single().suites.single().tests.single()
+        assertEquals(
+            listOf(
+                "sample.SuiteKt:movement/block moved/server[0]",
+                "sample.SuiteKt:movement/block moved/client[0]",
+            ),
+            test.steps.map { it.value },
         )
     }
 

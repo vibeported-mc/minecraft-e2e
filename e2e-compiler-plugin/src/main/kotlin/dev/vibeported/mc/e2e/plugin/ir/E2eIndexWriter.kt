@@ -65,7 +65,9 @@ internal class E2eIndexWriter(
                 append("{")
                 append("\"id\":").append(quote(test.id)).append(",")
                 append("\"name\":").append(quote(test.name)).append(",")
-                append("\"driver\":").append(quote(test.driver.id))
+                append("\"steps\":[")
+                append(test.steps.joinToString(",") { quote(it.id) })
+                append("]")
                 append("}")
             }
             append("]")

@@ -14,6 +14,7 @@ import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirLiteralExpression
 import org.jetbrains.kotlin.fir.expressions.FirPropertyAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirReturnExpression
 import org.jetbrains.kotlin.fir.expressions.FirVariableAssignment
 import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.expressions.toResolvedCallableSymbol
@@ -51,6 +52,7 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
                 checkConstantName(expression)
                 checkLambdaLiteral(expression)
                 checkDuplicateSharedNames(expression)
+                checkBodyIsDeclarative(expression)
             }
 
             E2eCallables.SERVER, E2eCallables.CLIENT -> {
@@ -60,6 +62,35 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             }
 
             else -> Unit
+        }
+    }
+
+    /**
+     * A test body is a plan, not code.
+     *
+     * The compiler reads the blocks out of it as an ordered list of steps and then throws the body
+     * away, so a statement written here would simply never run. Rejecting it is far kinder than
+     * silently dropping it, which is what the transform would otherwise do.
+     */
+    context(context: CheckerContext, reporter: DiagnosticReporter)
+    private fun checkBodyIsDeclarative(expression: FirFunctionCall) {
+        val body = (expression.argumentFor("body") as? FirAnonymousFunctionExpression)
+            ?.anonymousFunction ?: return
+
+        body.body?.statements?.forEach { statement ->
+            val allowed = when (statement) {
+                // `var x by shared<T>()`
+                is FirProperty -> statement.delegate != null
+                // `server { }` / `client { }`
+                is FirFunctionCall ->
+                    statement.toResolvedCallableSymbol()?.callableId in E2eCallables.BLOCKS
+                // The implicit return a lambda body ends with is not the author saying anything.
+                is FirReturnExpression -> true
+                else -> false
+            }
+            if (!allowed) {
+                reporter.reportOn(statement.source, E2eDiagnostics.E2E_TEST_BODY_NOT_DECLARATIVE)
+            }
         }
     }
 
@@ -294,6 +325,9 @@ internal object E2eCallables {
 
     /** Calls whose lambda argument is itself a lifted block, and so may contain further blocks. */
     val BLOCK_BODY_OWNERS: Set<CallableId> = setOf(E2E, SERVER, CLIENT)
+
+    /** The two calls that are a block. */
+    val BLOCKS: Set<CallableId> = setOf(SERVER, CLIENT)
 }
 
 internal fun FirFunctionCall.argumentFor(parameterName: String): FirExpression? =

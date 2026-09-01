@@ -6,12 +6,12 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.types.IrType
 
-internal enum class BlockRole { ORCHESTRATOR, SERVER, CLIENT }
+internal enum class BlockRole { SERVER, CLIENT }
 
 /**
  * One `var x by shared<T>()`.
  *
- * [property] is deleted from the driver body during the transform; [id] is what the rewritten reads
+ * The declaration disappears with the test body it was written in; [id] is what the rewritten reads
  * and writes carry instead.
  */
 internal class SharedPlan(
@@ -22,7 +22,7 @@ internal class SharedPlan(
 )
 
 /**
- * One lifted block: a test driver, or a `server`/`client` body at any nesting depth.
+ * One lifted block: a `server`/`client` body at any nesting depth.
  *
  * [lambda] is the function the frontend already built for the lambda literal. The transform moves
  * that very function into the generated table rather than copying its body, which keeps every
@@ -32,37 +32,39 @@ internal class BlockPlan(
     val id: String,
     val role: BlockRole,
     val clientIndex: Int,
+    /** The enclosing block, or null for a step written straight into the test body. */
     val parent: BlockPlan?,
     val testId: String,
-    /** The `e2e`/`server`/`client` call this body was an argument to. */
+    /** The `server`/`client` call this body was an argument to. */
     val call: IrCall,
     val lambda: IrSimpleFunction,
 ) {
     val children: MutableList<BlockPlan> = mutableListOf()
 
-    /**
-     * What a child block prefixes its id with. A driver contributes the test id rather than its own,
-     * so the common case reads as ".../block moved/server[0]" with no "/driver" segment in the way.
-     */
-    val pathPrefix: String get() = if (role == BlockRole.ORCHESTRATOR) testId else id
-
     fun selfAndDescendants(): List<BlockPlan> = listOf(this) + children.flatMap { it.selfAndDescendants() }
 }
 
+/**
+ * One `e2e("...") { }`.
+ *
+ * A test body is declarative: shared declarations and an ordered list of blocks to run, nothing
+ * else. So there is no body to execute and nothing to lift here -- [steps] is the whole test, and
+ * the orchestrator walks it.
+ */
 internal class TestPlan(
     val id: String,
     val name: String,
     val call: IrCall,
-    val driver: BlockPlan,
 ) {
     val shared: MutableList<SharedPlan> = mutableListOf()
+    val steps: MutableList<BlockPlan> = mutableListOf()
 }
 
 internal class SuitePlan(
     val id: String,
     val name: String,
     val call: IrCall,
-    /** JVM getter on the file facade, so the orchestrator can recover this suite by reflection. */
+    /** JVM getter on the file facade, in case a tool wants the descriptors back. */
     val accessor: String,
 ) {
     val tests: MutableList<TestPlan> = mutableListOf()
@@ -80,8 +82,9 @@ internal class FilePlan(
             if (pkg.isEmpty()) tableSimpleName else "$pkg.$tableSimpleName"
         }
 
-    fun blocks(): List<BlockPlan> =
-        suites.flatMap { suite -> suite.tests.flatMap { it.driver.selfAndDescendants() } }
+    fun blocks(): List<BlockPlan> = suites.flatMap { suite ->
+        suite.tests.flatMap { test -> test.steps.flatMap { it.selfAndDescendants() } }
+    }
 
     fun shared(): List<SharedPlan> = suites.flatMap { suite -> suite.tests.flatMap { it.shared } }
 
