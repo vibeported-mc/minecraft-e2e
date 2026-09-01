@@ -51,7 +51,13 @@ public object E2eMain {
 
         val reportDir = File(plan.reportDir).apply { mkdirs() }
         val logDir = File(reportDir, "logs")
-        val cluster = Cluster(plan, logDir)
+        // The suites decide who takes part: every client they name by literal is in the manifest, so
+        // the run starts exactly those and nothing has to be configured twice.
+        val clients = index.files.flatMap { it.clients }.distinct().sorted()
+            .ifEmpty { listOf("default") }
+        println("e2e: the suites name ${clients.size} client(s): $clients")
+
+        val cluster = Cluster(plan, logDir, clients)
 
         val report = try {
             runOrchestrated(plan, index, cluster)
@@ -76,8 +82,9 @@ public object E2eMain {
                 println("e2e: orchestrator listening on port ${hub.port}")
 
                 val orchestrator = Orchestrator(
-                    peer = RpcPeer(hub.transport(), callTimeout = plan.testTimeoutSeconds.seconds),
+                    peer = RpcPeer(hub.transport(), callTimeout = plan.callTimeoutSeconds.seconds),
                     index = index,
+                    testTimeout = plan.testTimeoutSeconds.seconds,
                 )
                 orchestrator.start(scope)
 
@@ -161,7 +168,11 @@ public object E2eMain {
      * A restart resets the world: nothing a test built survives it. That matters for a suite whose
      * later tests lean on what earlier ones left behind, and it is the price of continuing at all.
      */
-    private class Cluster(private val plan: LaunchPlan, val logDir: File) {
+    private class Cluster(
+        private val plan: LaunchPlan,
+        val logDir: File,
+        private val clients: List<String>,
+    ) {
 
         private val processes = mutableListOf<GameProcess>()
         private var port: Int = 0
@@ -180,13 +191,20 @@ public object E2eMain {
             awaitNode(hub, NodeId.SERVER, server)
             println("e2e: server is up")
 
-            plan.clients.forEachIndexed { clientIndex, spec ->
-                println("e2e: starting client $clientIndex")
-                val client = GameProcess.start(
-                    spec = spec,
+            // One ModDevGradle client run is harvested as a template; every named client is that
+            // same command with its own username and game directory.
+            val template = plan.clients.firstOrNull()
+                ?: error("The launch plan has no client run to start clients from")
+
+            clients.forEach { name ->
+                println("e2e: starting client `$name`")
+                val gameDir = File(File(template.workingDir).parentFile, "e2eClient-$name")
+                seedClient(gameDir)
+                val process = GameProcess.start(
+                    spec = template.copy(name = "client-$name", workingDir = gameDir.absolutePath),
                     extraJvmArgs = nodeArgs() + listOf(
                         "-De2e.node.role=CLIENT",
-                        "-De2e.node.index=$clientIndex",
+                        "-De2e.node.name=$name",
                         // The client joins the server itself; the two never learn about each other
                         // any other way.
                         "-De2e.server.address=${plan.serverAddress}",
@@ -194,12 +212,12 @@ public object E2eMain {
                     logDir = logDir,
                     echo = ::println,
                     // The username is the client's name as far as a test is concerned: it is what
-                    // waitForPlayer and teleport look it up by on the server.
-                    extraProgramArgs = listOf("--username", clientName(clientIndex)),
+                    // waitForPlayer, teleport and lookAtPlayer look it up by on the server.
+                    extraProgramArgs = listOf("--username", name),
                 )
-                processes += client
-                awaitNode(hub, NodeId.client(clientIndex), client)
-                println("e2e: client $clientIndex is up")
+                processes += process
+                awaitNode(hub, NodeId.client(name), process)
+                println("e2e: client `$name` is up")
             }
         }
 
@@ -216,12 +234,46 @@ public object E2eMain {
             processes.clear()
         }
 
-        /** Names are not yet carried through the manifest, so the one client is the default one. */
-        private fun clientName(index: Int): String = if (index == 0) "default" else "client$index"
+        /**
+         * Clears the screens a fresh client stops on, none of which anyone is there to click.
+         *
+         * A first launch shows the accessibility onboarding, and a first multiplayer join shows the
+         * third-party server warning; NeoForge adds one of its own whenever any mod loads with a
+         * warning, which is rarely even ours. Each one looks exactly like a hang from the outside.
+         *
+         * This lives here rather than in the Gradle plugin because only the run knows how many
+         * clients there are and what they are called, and each one has a directory of its own.
+         *
+         * Only written when absent, so a directory someone has since adjusted by hand is left alone.
+         */
+        private fun seedClient(dir: File) {
+            val config = File(dir, "config").apply { mkdirs() }
+            val warnings = File(config, "neoforge-client.toml")
+            if (!warnings.exists()) {
+                warnings.writeText("showLoadWarnings = false" + System.lineSeparator())
+            }
+
+            val options = File(dir, "options.txt")
+            if (!options.exists()) {
+                options.writeText(
+                    listOf(
+                        "onboardAccessibility:false",
+                        "skipMultiplayerWarning:true",
+                        "narrator:0",
+                        "tutorialStep:none",
+                        // An automated client spends its life unfocused.
+                        "pauseOnLostFocus:false",
+                    ).joinToString(System.lineSeparator(), postfix = System.lineSeparator())
+                )
+            }
+        }
 
         private fun nodeArgs() = listOf(
             "-De2e.orchestrator.host=127.0.0.1",
             "-De2e.orchestrator.port=$port",
+            // Read by the node that waits for a player to arrive or turn, which is the only party
+            // that can see whether the effect landed.
+            "-De2e.action.timeout.seconds=${plan.actionTimeoutSeconds}",
         )
 
         /**

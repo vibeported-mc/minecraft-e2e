@@ -33,5 +33,10 @@ public data class LaunchPlan(
     /** The address the client is told to join once it is up. */
     public val serverAddress: String = "localhost:25565",
     public val startupTimeoutSeconds: Long = 900,
+    /** Wall clock for one whole test. */
     public val testTimeoutSeconds: Long = 300,
+    /** How long one block invocation may take before the orchestrator stops waiting for it. */
+    public val callTimeoutSeconds: Long = 120,
+    /** How long a teleport or a turn may take to show up on the client that was asked. */
+    public val actionTimeoutSeconds: Long = 10,
 )

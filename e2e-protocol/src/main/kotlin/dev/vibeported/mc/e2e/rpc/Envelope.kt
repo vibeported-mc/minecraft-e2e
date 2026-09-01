@@ -75,6 +75,9 @@ public sealed interface PlayerAction {
 
     @Serializable
     public data class LookAt(public val x: Double, public val y: Double, public val z: Double) : PlayerAction
+
+    @Serializable
+    public data class LookAtPlayer(public val target: String) : PlayerAction
 }
 
 /**
@@ -99,6 +102,15 @@ public sealed interface PlayerExpectation {
 
     @Serializable
     public data class Facing(public val x: Double, public val y: Double, public val z: Double) : PlayerExpectation
+
+    /**
+     * Facing another player, worked out from this client's own view of them.
+     *
+     * By name rather than by position, because the other player may have moved since whoever asked
+     * last saw them.
+     */
+    @Serializable
+    public data class FacingPlayer(public val target: String) : PlayerExpectation
 }
 
 /** Asks the receiving peer to cancel an in-flight call it is running for us. */

@@ -6,35 +6,49 @@ separate processes, driven by an orchestrator.
 ```kotlin
 val blocks = suite("blocks") {
 
-    e2e("a block placed in front of the player shows up on the client") {
-        var target by shared<BlockPos>()
+    e2e("two players fly to a block, watch it, then watch each other") {
+        val target = shared<BlockPos>()
+        val alexAt = shared<BlockPos>()
 
         server {
-            val player = serverPlayer ?: error("nobody had joined the server")
-            val front = player.blockPosition().relative(player.direction, 2)
-            serverLevel.setBlockAndUpdate(front, Blocks.GOLD_BLOCK.defaultBlockState())
-
-            target = front
-            log("placed a gold block at $front")
+            waitForPlayer("steve")
+            waitForPlayer("alex")
+            serverLevel.setBlockAndUpdate(FAR_AWAY, Blocks.GOLD_BLOCK.defaultBlockState())
+            target.set(FAR_AWAY)
         }
 
-        client {
-            val expected = target
-            delay(3.seconds)
-            val seen = clientLevel?.getBlockState(expected)?.block
-            assertThat("the client should see the gold block") { seen == Blocks.GOLD_BLOCK }
+        parallel {
+            client("steve") {
+                val block = target.get()
+                teleport(block.offset(-3, 4, -3), flying = true)
+                assertBlock("steve should see the gold block", block, timeoutSec(10)) {
+                    it.block == Blocks.GOLD_BLOCK
+                }
+                lookAt(block)
+                delay(5.seconds)
+
+                alexAt.get()            // finishes the moment alex has landed
+                lookAtPlayer("alex")
+            }
+
+            client("alex") { /* the mirror image */ }
         }
     }
 }
 ```
 
-That test passes today against Minecraft 26.2 / NeoForge 26.2.0.69:
+That test passes today against Minecraft 26.2 / NeoForge 26.2.0.69, with two real client
+processes running the two halves of that `parallel` at once:
 
 ```
-PASS blocks > a block placed in front of the player shows up on the client  (8108 ms)
+PASS blocks > two players fly to a block, watch it, then watch each other  (10450 ms)
+    PASS server        …/server[0]            (98 ms)
+    PASS client[steve] …/client[steve][0]  (10316 ms)
+    PASS client[alex]  …/client[alex][0]   (10343 ms)
     log:
-      [server]    placed a gold block at BlockPos{x=9, y=-60, z=-1}
-      [client[0]] the client sees Block{minecraft:gold_block} at BlockPos{x=9, y=-60, z=-1}
+      [server]        placed a gold block at BlockPos{x=100, y=200, z=200}
+      [client[steve]] alex is at BlockPos{x=103, y=204, z=203}
+      [client[alex]]  steve is at BlockPos{x=97, y=204, z=197}
 ```
 
 ## Setting it up
@@ -61,7 +75,7 @@ Write suites in `src/e2eTest/kotlin`, then:
 ./gradlew runE2eTests
 ```
 
-That launches a dedicated server, launches a client which joins it, runs every suite, prints a report
+That launches a dedicated server, launches one client per name the suites mention, runs every suite, prints a report
 and writes `build/reports/e2e/report.json`. Each game process's console is captured under
 `build/reports/e2e/logs/`, alongside the exact command used to start it.
 
@@ -73,17 +87,22 @@ to be kept in step with ModDevGradle as it changes.
 
 ## A test is a plan, not code
 
-A test body may contain **only** shared declarations and `server`/`client` calls. Anything else is a
-compile error, because there is nowhere for it to run:
+A test body may contain **only** shared declarations, `server`/`client` calls, and `parallel { }`
+groups of those. Anything else is a compile error, because there is nowhere for it to run:
 
 ```kotlin
 e2e("...") {
-    var target by shared<BlockPos>()   // allowed
+    val target = shared<BlockPos>()    // allowed
     server { … }                       // allowed
-    client { … }                       // allowed
+    client("steve") { … }              // allowed
+    parallel { client("steve") { … }; client("alex") { … } }   // allowed
     println("hello")                   // compile error
 }
 ```
+
+Steps run one after another, which is what makes a test readable. `parallel { }` is the one way to
+give that up, so a reader can tell at a glance which parts of a test overlap — and it is what lets
+two clients look at each other, since neither is worth looking at until both have arrived.
 
 The compiler reads the blocks out as an ordered list of steps and throws the body away. So the
 orchestrator has nothing to execute — it walks the list, telling each node which block to run. That
@@ -136,8 +155,9 @@ Two consequences worth knowing:
 
 ```
         orchestrator (plain JVM, no Minecraft)
-        ├── TCP ──> dedicated server process   (mods: e2e, <yourmod>_e2e)
-        └── TCP ──> client process             (mods: e2e, <yourmod>_e2e)
+        ├── TCP ──> dedicated server process    (mods: e2e, <yourmod>_e2e)
+        ├── TCP ──> client process "steve"      (mods: e2e, <yourmod>_e2e)
+        └── TCP ──> client process "alex"       (…one per name the suites mention)
 ```
 
 The two game processes never open a socket to each other. A `client { }` raised inside a `server { }`
@@ -158,7 +178,7 @@ split is enforced by the type system, not by convention:
 | In a `server { }` | In a `client { }` |
 | --- | --- |
 | `minecraftServer`, `serverLevel` | `minecraft`, `clientLevel` |
-| `serverPlayer`, `serverPlayers` | `clientPlayer`, `clientIndex` |
+| `serverPlayer`, `serverPlayers` | `clientPlayer`, `clientName` |
 
 ## The rules the compiler enforces
 
@@ -174,6 +194,7 @@ These are FIR checkers, so they appear under the cursor in the IDE as you type, 
 | `shared<T>()` only as `var x by shared<T>()` inside an `e2e` block | One declaring scope, therefore one id |
 | No `server`/`client` inside another lambda | Its ordinal would depend on how many times that lambda ran |
 | No duplicate test or shared names in one scope | The two would collide on one id |
+| A client name must be a string literal | The run starts the clients a suite names, and reads that list out of the compiled code |
 
 Anything top-level or static is fine to reference: every node loads the same jars.
 
@@ -192,12 +213,15 @@ working.
 ## Stable ids
 
 ```
-…BlocksKt:blocks                                    suite
-…BlocksKt:blocks/a block moved                      test
-…BlocksKt:blocks/a block moved/server[0]            a step
-…BlocksKt:blocks/a block moved/server[0]/client[0]  a client block raised by the server
-…BlocksKt:blocks/a block moved#target               a shared value
+…BlocksKt:blocks                                          suite
+…BlocksKt:blocks/a block moved                            test
+…BlocksKt:blocks/a block moved/server[0]                  a step
+…BlocksKt:blocks/a block moved/server[0]/client[alex][0]  a client block raised by the server
+…BlocksKt:blocks/a block moved#target                     a shared value
 ```
+
+Ordinals count per client name, so adding a client to a test cannot renumber another one's blocks,
+and a report says who ran a block without anyone having to look it up.
 
 Ordinals come from declaration order, so reformatting a file or editing an unrelated test leaves
 every id alone. Renaming a suite or test *does* change its ids: the price of ids a person can read.
@@ -219,8 +243,6 @@ module graph, and two jars cannot both export one package to it.
 
 ## Not built yet
 
-- **More than one client.** The plan carries a list and the ids already have a client index, but the
-  plugin launches a single client.
 - **Publishing.** The Gradle plugin resolves the compiler plugin and orchestrator from configurations
   that default to published coordinates; nothing is published yet, so the example points them at its
   own projects.

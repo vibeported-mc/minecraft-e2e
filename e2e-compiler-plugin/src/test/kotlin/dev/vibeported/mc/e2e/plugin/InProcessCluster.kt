@@ -37,7 +37,7 @@ class InProcessCluster private constructor(
             scope: CoroutineScope,
             index: E2eIndex,
             loader: ClassLoader,
-            clients: Int = 1,
+            clients: List<String> = listOf("default"),
         ): InProcessCluster {
             val hub = InMemoryHub()
             val registry = TableRegistry(index, loader)
@@ -49,7 +49,7 @@ class InProcessCluster private constructor(
 
             val runners = buildList {
                 add(NodeId.SERVER)
-                repeat(clients) { add(NodeId.client(it)) }
+                clients.forEach { add(NodeId.client(it)) }
             }.map { id ->
                 NodeRunner(
                     id = id,

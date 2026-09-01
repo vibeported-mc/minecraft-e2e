@@ -8,6 +8,9 @@ import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.analysis.checkers.expression.FirExpressionChecker
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirProperty
+import org.jetbrains.kotlin.fir.declarations.FirValueParameter
+import org.jetbrains.kotlin.fir.types.classId
+import org.jetbrains.kotlin.fir.types.coneTypeOrNull
 import org.jetbrains.kotlin.fir.declarations.FirVariable
 import org.jetbrains.kotlin.fir.expressions.FirAnonymousFunctionExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpression
@@ -51,7 +54,14 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             E2eCallables.E2E -> {
                 checkConstantName(expression)
                 checkLambdaLiteral(expression)
-                checkBodyIsDeclarative(expression)
+                checkBodyIsDeclarative(expression, allowShared = true)
+            }
+
+            E2eCallables.PARALLEL -> {
+                checkLambdaLiteral(expression)
+                // A shared declaration inside a group would have no scope of its own to belong to,
+                // so a parallel body is narrower than a test body: blocks and nothing else.
+                checkBodyIsDeclarative(expression, allowShared = false)
             }
 
             E2eCallables.SERVER, E2eCallables.CLIENT -> {
@@ -61,6 +71,26 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
             }
 
             else -> Unit
+        }
+
+        // Not tied to any particular function: anything that annotates a parameter gets this.
+        checkClientNamesAreLiterals(expression)
+    }
+
+    /**
+     * Every argument to a `@MinecraftClientName` parameter must be a string literal.
+     *
+     * The plugin collects these names so the orchestrator can start exactly the clients a suite
+     * mentions. A name computed at runtime could not be collected, and would address a client that
+     * was never launched.
+     */
+    context(context: CheckerContext, reporter: DiagnosticReporter)
+    private fun checkClientNamesAreLiterals(expression: FirFunctionCall) {
+        expression.resolvedArgumentMapping?.forEach { (argument, parameter) ->
+            if (!parameter.isClientName()) return@forEach
+            if (argument !is FirLiteralExpression || argument.value !is String) {
+                reporter.reportOn(argument.source, E2eDiagnostics.E2E_CLIENT_NAME_NOT_LITERAL)
+            }
         }
     }
 
@@ -72,17 +102,18 @@ object E2eCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Com
      * silently dropping it, which is what the transform would otherwise do.
      */
     context(context: CheckerContext, reporter: DiagnosticReporter)
-    private fun checkBodyIsDeclarative(expression: FirFunctionCall) {
+    private fun checkBodyIsDeclarative(expression: FirFunctionCall, allowShared: Boolean) {
         val body = (expression.argumentFor("body") as? FirAnonymousFunctionExpression)
             ?.anonymousFunction ?: return
 
         body.body?.statements?.forEach { statement ->
             val allowed = when (statement) {
                 // `val x = shared<BlockPos>()`
-                is FirProperty -> statement.initializer.isSharedCall()
-                // `server { }` / `client { }`
+                is FirProperty -> allowShared && statement.initializer.isSharedCall()
+                // `server { }` / `client { }`, or a `parallel { }` group of them
                 is FirFunctionCall ->
-                    statement.toResolvedCallableSymbol()?.callableId in E2eCallables.BLOCKS
+                    statement.toResolvedCallableSymbol()?.callableId
+                        .let { it in E2eCallables.BLOCKS || (allowShared && it == E2eCallables.PARALLEL) }
                 // The implicit return a lambda body ends with is not the author saying anything.
                 is FirReturnExpression -> true
                 else -> false
@@ -250,9 +281,10 @@ internal object E2eCallables {
     val SERVER: CallableId = CallableId(PACKAGE, Name.identifier("server"))
     val CLIENT: CallableId = CallableId(PACKAGE, Name.identifier("client"))
     val SHARED: CallableId = CallableId(PACKAGE, Name.identifier("shared"))
+    val PARALLEL: CallableId = CallableId(PACKAGE, Name.identifier("parallel"))
 
     /** Calls whose lambda argument is itself a lifted block, and so may contain further blocks. */
-    val BLOCK_BODY_OWNERS: Set<CallableId> = setOf(E2E, SERVER, CLIENT)
+    val BLOCK_BODY_OWNERS: Set<CallableId> = setOf(E2E, SERVER, CLIENT, PARALLEL)
 
     /** The two calls that are a block. */
     val BLOCKS: Set<CallableId> = setOf(SERVER, CLIENT)
@@ -261,6 +293,13 @@ internal object E2eCallables {
 /** Whether an expression is the `shared<T>()` call that declares a shared value. */
 internal fun FirExpression?.isSharedCall(): Boolean =
     (this as? FirFunctionCall)?.toResolvedCallableSymbol()?.callableId == E2eCallables.SHARED
+
+/** Whether a parameter is annotated `@MinecraftClientName`. */
+internal fun FirValueParameter.isClientName(): Boolean =
+    annotations.any {
+        it.annotationTypeRef.coneTypeOrNull?.classId?.asSingleFqName()?.asString() ==
+            "dev.vibeported.mc.e2e.MinecraftClientName"
+    }
 
 internal fun FirFunctionCall.argumentFor(parameterName: String): FirExpression? =
     resolvedArgumentMapping?.entries?.firstOrNull { it.value.name.asString() == parameterName }?.key

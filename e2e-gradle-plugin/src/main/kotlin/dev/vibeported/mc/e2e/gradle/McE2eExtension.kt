@@ -42,9 +42,6 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
     /** Name of the source set the suites live in, and so of `src/<name>/kotlin`. */
     abstract val sourceSetName: Property<String>
 
-    /** How many clients to launch. One for now; the ids already carry a client index. */
-    abstract val clients: Property<Int>
-
     /** Where the client is told to join once it is up. */
     abstract val serverAddress: Property<String>
 
@@ -53,8 +50,14 @@ abstract class McE2eExtension @Inject constructor(private val project: Project) 
     /** How long a game process may take to reach the orchestrator before the run gives up. */
     abstract val startupTimeoutSeconds: Property<Long>
 
-    /** How long one block may run before the orchestrator stops waiting for it. */
+    /** How long one whole test may run before the orchestrator fails it. */
     abstract val testTimeoutSeconds: Property<Long>
+
+    /** How long one block invocation may take before the orchestrator stops waiting for it. */
+    abstract val callTimeoutSeconds: Property<Long>
+
+    /** How long a teleport or a turn may take to show up on the client that was asked. */
+    abstract val actionTimeoutSeconds: Property<Long>
 
     /**
      * The Java version the game runs on. Minecraft 26.2 needs 25, and resolution fails outright on

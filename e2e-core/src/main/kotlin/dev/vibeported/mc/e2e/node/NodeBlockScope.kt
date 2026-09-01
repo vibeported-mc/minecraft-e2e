@@ -2,6 +2,7 @@ package dev.vibeported.mc.e2e.node
 
 import dev.vibeported.mc.e2e.protocol.BlockId
 import dev.vibeported.mc.e2e.BlockScope
+import dev.vibeported.mc.e2e.DEFAULT_CLIENT
 import dev.vibeported.mc.e2e.Shared
 import dev.vibeported.mc.e2e.mc.TickClock
 import dev.vibeported.mc.e2e.mc.applyPlayerAction
@@ -70,7 +71,7 @@ internal class NodeBlockScope(
 
     override val serverPlayer: ServerPlayer? get() = serverPlayers.firstOrNull()
 
-    override val clientIndex: Int get() = self.index
+    override val clientName: String get() = self.name
 
     override val minecraft: Minecraft
         get() = client ?: error("`$currentBlock` asked for the client, but it is running on $self")
@@ -109,6 +110,15 @@ internal class NodeBlockScope(
         control(client, PlayerAction.Teleport(centre.x, centre.y, centre.z, flying))
         confirm(client, PlayerExpectation.AtBlock(pos.x, pos.y, pos.z)) { seen ->
             "teleport to $pos never took effect for client `$client`; $seen"
+        }
+    }
+
+    override val thisClient: String get() = if (client != null) self.name else DEFAULT_CLIENT
+
+    override suspend fun lookAtPlayer(client: String, target: String) {
+        control(client, PlayerAction.LookAtPlayer(target))
+        confirm(client, PlayerExpectation.FacingPlayer(target)) { seen ->
+            "lookAtPlayer(\"$target\") never took effect for client `$client`; $seen"
         }
     }
 
@@ -196,7 +206,13 @@ internal class NodeBlockScope(
     }
 
     private companion object {
-        /** 10 seconds at 20 ticks a second, far longer than a loopback round trip needs. */
-        const val ACTION_TIMEOUT_TICKS = 200
+        /**
+         * How many ticks a teleport or a turn gets to show up, from `mcE2E.actionTimeoutSeconds`.
+         *
+         * Counted in ticks rather than seconds because that is the unit the waiting happens in: a
+         * server too busy to tick is exactly the case where a wall clock would give up early.
+         */
+        val ACTION_TIMEOUT_TICKS: Int =
+            (System.getProperty("e2e.action.timeout.seconds")?.toIntOrNull() ?: 10) * 20
     }
 }

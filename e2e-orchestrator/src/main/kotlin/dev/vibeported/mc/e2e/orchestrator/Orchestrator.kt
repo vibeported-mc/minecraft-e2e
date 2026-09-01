@@ -23,8 +23,14 @@ import dev.vibeported.mc.e2e.rpc.SharedSet
 import dev.vibeported.mc.e2e.rpc.toRemoteFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
@@ -44,6 +50,14 @@ import java.util.concurrent.atomic.AtomicLong
 public class Orchestrator(
     private val peer: RpcPeer,
     private val index: E2eIndex,
+    /**
+     * Wall clock for one whole test.
+     *
+     * Distinct from the peer's call timeout, which bounds a single block invocation: a test that
+     * waits on a shared value nobody writes never makes a call that could time out, so without this
+     * it would wait for the run to be killed instead of failing with a reason.
+     */
+    private val testTimeout: Duration = 5.minutes,
 ) {
     private val shared = SharedStore()
 
@@ -88,13 +102,23 @@ public class Orchestrator(
         var failure: RemoteFailure? = null
 
         try {
-            // A test is an ordered list of blocks, so running it is walking that list. Nothing here
-            // loads or executes test code: it only says which node runs what, and in what order.
-            for (step in test.steps) {
-                val entry = blockEntries[step]
-                    ?: error("The index lists step `$step` for `${test.id}` but has no entry for it")
-                route(InvokeBlock(runId, step, entry.target()))
+            withTimeout(testTimeout) {
+                // A test is an ordered list of steps, so running it is walking that list. Nothing
+                // here loads or executes test code: it only says which node runs what, in what order.
+                for (step in test.steps) {
+                    if (step.parallel) {
+                        // The one place ordering is deliberately given up. Failing the whole step if
+                        // any member fails is what coroutineScope does, and what a test means by it.
+                        coroutineScope {
+                            step.blocks.forEach { block -> launch { dispatch(runId, test, block) } }
+                        }
+                    } else {
+                        step.blocks.forEach { block -> dispatch(runId, test, block) }
+                    }
+                }
             }
+        } catch (timeout: TimeoutCancellationException) {
+            failure = timedOut(test)
         } catch (remote: RemoteInvocationException) {
             failure = remote.failure
         } catch (error: Throwable) {
@@ -120,9 +144,35 @@ public class Orchestrator(
         )
     }
 
+    /**
+     * What the test ran out of time doing.
+     *
+     * A forgotten write is the commonest way to reach here, and "the test timed out" would leave
+     * whoever reads the report to guess which value was missing, so the parked read says it instead.
+     */
+    private fun timedOut(test: E2eIndex.TestEntry): RemoteFailure {
+        val parked = waitingOn
+        val detail = if (parked == null) {
+            "no node was waiting on the orchestrator, so a block was still running"
+        } else {
+            "still waiting on shared value `${parked.id.value}`"
+        }
+        return RemoteFailure(
+            type = "dev.vibeported.mc.e2e.orchestrator.TestTimedOut",
+            message = "`${test.name}` ran for $testTimeout without finishing; $detail",
+            stack = "",
+        )
+    }
+
+    private suspend fun dispatch(runId: String, test: E2eIndex.TestEntry, block: BlockId) {
+        val entry = blockEntries[block]
+            ?: error("The index lists step `$block` for `${test.id}` but has no entry for it")
+        route(InvokeBlock(runId, block, entry.target()))
+    }
+
     private fun E2eIndex.BlockEntry.target(): NodeId = when (role) {
         NodeRole.SERVER -> NodeId.SERVER
-        NodeRole.CLIENT -> NodeId.client(clientIndex)
+        NodeRole.CLIENT -> NodeId.client(client)
         NodeRole.ORCHESTRATOR -> error("The orchestrator runs no blocks; `$id` should not target it")
     }
 
@@ -148,18 +198,10 @@ public class Orchestrator(
         // Relayed rather than acted on: this process has no game in it. Moving a player is the
         // server's job, and only a client can confirm it has caught up.
         is ControlPlayer -> peer.call(NodeId.SERVER, payload)
-        is AwaitPlayer -> peer.call(clientNode(payload.client), payload)
+        is AwaitPlayer -> peer.call(NodeId.client(payload.client), payload)
 
         is Cancel -> null
     }
-
-    /**
-     * The node running a named client.
-     *
-     * Names are not yet carried on [NodeId], so the single client is index 0 for now. Everything
-     * above this point already speaks in names, so widening it is a change here and nowhere else.
-     */
-    private fun clientNode(name: String): NodeId = NodeId.client(0)
 
     private suspend fun invoke(payload: InvokeBlock): JsonElement? {
         val startedAt = System.currentTimeMillis()

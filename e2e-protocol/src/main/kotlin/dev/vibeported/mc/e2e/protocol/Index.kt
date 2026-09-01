@@ -21,6 +21,8 @@ public data class E2eIndex(
         public val tableClass: String,
         public val suites: List<SuiteEntry> = emptyList(),
         public val blocks: List<BlockEntry> = emptyList(),
+        /** Every client named anywhere in this file. */
+        public val clients: List<String> = emptyList(),
     )
 
     /**
@@ -49,14 +51,30 @@ public data class E2eIndex(
     public data class TestEntry(
         public val id: String,
         public val name: String,
-        public val steps: List<BlockId> = emptyList(),
+        public val steps: List<StepEntry> = emptyList(),
+        /** Every client this test names, so a reader can see who takes part without tracing blocks. */
+        public val clients: List<String> = emptyList(),
+    )
+
+    /**
+     * One step of a test: either a single block, or several to run at the same time.
+     *
+     * A group rather than a flag on each block, because simultaneity is a property of the step and
+     * not of its members -- and because it keeps "these overlap" visible in the manifest exactly
+     * where a reader looks for the order of things.
+     */
+    @Serializable
+    public data class StepEntry(
+        public val blocks: List<BlockId>,
+        public val parallel: Boolean = false,
     )
 
     @Serializable
     public data class BlockEntry(
         public val id: BlockId,
         public val role: NodeRole,
-        public val clientIndex: Int = 0,
+        /** Which client runs it. Empty for a server block. */
+        public val client: String = "",
         /** Id of the enclosing block; `null` for a step written straight into the test body. */
         public val parent: BlockId? = null,
         /** Id of the test this block belongs to. */

@@ -312,7 +312,7 @@ internal class E2eTransformer(
             arguments[0] = org.jetbrains.kotlin.ir.expressions.impl.IrGetEnumValueImpl(
                 builder.startOffset, builder.endOffset, symbols.nodeRole.defaultType, entry,
             )
-            arguments[1] = builder.irInt(block.clientIndex)
+            arguments[1] = builder.irString(block.client)
         }
     }
 

@@ -66,7 +66,15 @@ internal class E2eIndexWriter(
                 append("\"id\":").append(quote(test.id)).append(",")
                 append("\"name\":").append(quote(test.name)).append(",")
                 append("\"steps\":[")
-                append(test.steps.joinToString(",") { quote(it.id) })
+                test.steps.forEachIndexed { stepIndex, step ->
+                    if (stepIndex > 0) append(",")
+                    append("{\"blocks\":[")
+                    append(step.blocks.joinToString(",") { quote(it.id) })
+                    append("],\"parallel\":").append(step.parallel).append("}")
+                }
+                append("],")
+                append("\"clients\":[")
+                append(test.clients.joinToString(",") { quote(it) })
                 append("]")
                 append("}")
             }
@@ -75,13 +83,17 @@ internal class E2eIndexWriter(
         }
         append("],")
 
+        append("\"clients\":[")
+        append(plan.clients().joinToString(",") { quote(it) })
+        append("],")
+
         append("\"blocks\":[")
         plan.blocks().forEachIndexed { index, block ->
             if (index > 0) append(",")
             append("{")
             append("\"id\":").append(quote(block.id)).append(",")
             append("\"role\":").append(quote(block.role.name)).append(",")
-            append("\"clientIndex\":").append(block.clientIndex).append(",")
+            append("\"client\":").append(quote(block.client)).append(",")
             block.parent?.let { append("\"parent\":").append(quote(it.id)).append(",") }
             append("\"test\":").append(quote(block.testId))
             append("}")

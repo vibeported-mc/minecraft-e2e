@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -11,6 +12,7 @@ import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
+import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
@@ -81,9 +83,10 @@ internal class E2ePlanner(
         suite.tests += test
 
         planShared(test, body)
+        collectClientNames(test, body)
         // The test body is declarative, so its blocks are the test: an ordered list of steps for the
         // orchestrator to walk, rather than a body somebody has to run.
-        planBlocks(test, parent = null, prefix = test.id, lambda = body) { test.steps += it }
+        planSteps(test, body)
     }
 
     /** Shared values may only be declared in a test body, so one walk of it finds them all. */
@@ -113,6 +116,72 @@ internal class E2ePlanner(
     }
 
     /**
+     * Turns a test body into ordered steps.
+     *
+     * A block written straight into the body is a step of its own; a `parallel { }` collects the
+     * blocks inside it into one step that runs together. Ordinals keep counting across the whole
+     * test, so wrapping two blocks in `parallel` does not renumber anything after them.
+     */
+    private fun planSteps(test: TestPlan, body: IrSimpleFunction) {
+        val ordinals = mutableMapOf<String, Int>()
+
+        body.body?.acceptChildrenVoid(object : IrVisitorVoid() {
+            override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
+
+            override fun visitFunctionExpression(expression: IrFunctionExpression) = Unit
+
+            override fun visitCall(expression: IrCall) {
+                when {
+                    expression.fqName() == E2eDsl.PARALLEL -> {
+                        val group = expression.lambdaArgument("body") ?: run {
+                            report(expression, "a parallel block body must be a lambda literal")
+                            return
+                        }
+                        val step = StepPlan(parallel = true)
+                        test.steps += step
+                        planBlocks(test, null, test.id, group, ordinals) { step.blocks += it }
+                    }
+
+                    expression.blockRole() != null -> {
+                        val step = StepPlan(parallel = false)
+                        test.steps += step
+                        planBlock(test, null, test.id, expression, ordinals) { step.blocks += it }
+                    }
+
+                    else -> expression.acceptChildrenVoid(this)
+                }
+            }
+        })
+    }
+
+    /**
+     * Records every client name the test mentions, wherever it appears.
+     *
+     * The names are read off the callee's parameters rather than off a list of functions this plugin
+     * knows about, so a framework method that gains a client name is collected here the moment it is
+     * annotated, with nothing to change on this side.
+     */
+    private fun collectClientNames(test: TestPlan, body: IrSimpleFunction) {
+        body.body?.acceptChildrenVoid(object : IrVisitorVoid() {
+            override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
+
+            override fun visitCall(expression: IrCall) {
+                expression.symbol.owner.parameters.forEachIndexed { index, parameter ->
+                    if (!parameter.isClientName()) return@forEachIndexed
+                    val argument = expression.arguments.getOrNull(index)
+                    // An omitted argument means the default, which is the default client.
+                    if (argument == null) {
+                        test.mentioned += DEFAULT_CLIENT
+                    } else {
+                        ((argument as? IrConst)?.value as? String)?.let { test.mentioned += it }
+                    }
+                }
+                expression.acceptChildrenVoid(this)
+            }
+        })
+    }
+
+    /**
      * Assigns ordinals within [parent] and recurses.
      *
      * Deliberately does not descend into unrelated lambdas. A `server { }` raised from inside, say,
@@ -124,10 +193,9 @@ internal class E2ePlanner(
         parent: BlockPlan?,
         prefix: String,
         lambda: IrSimpleFunction,
+        ordinals: MutableMap<String, Int>,
         collect: (BlockPlan) -> Unit,
     ) {
-        val ordinals = mutableMapOf<BlockRole, Int>()
-
         lambda.body?.acceptChildrenVoid(object : IrVisitorVoid() {
             override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
 
@@ -151,32 +219,56 @@ internal class E2ePlanner(
             }
 
             override fun visitCall(expression: IrCall) {
-                val role = expression.blockRole()
-                if (role == null) {
+                if (expression.blockRole() == null) {
                     expression.acceptChildrenVoid(this)
                     return
                 }
-                val body = expression.lambdaArgument("body") ?: run {
-                    report(expression, "a ${role.name.lowercase()} block body must be a lambda literal")
-                    return
-                }
-                val ordinal = ordinals.merge(role, 1, Int::plus)!! - 1
-                val clientIndex = if (role == BlockRole.CLIENT) expression.intArgument("index") ?: 0 else 0
-                val explicitId = expression.constArgument("id")
-                val label = role.name.lowercase()
-                val child = BlockPlan(
-                    id = explicitId?.let { "$prefix/$it" } ?: "$prefix/$label[$ordinal]",
-                    role = role,
-                    clientIndex = clientIndex,
-                    parent = parent,
-                    testId = test.id,
-                    call = expression,
-                    lambda = body,
-                )
-                collect(child)
-                planBlocks(test, child, child.id, body) { child.children += it }
+                planBlock(test, parent, prefix, expression, ordinals, collect)
             }
         })
+    }
+
+    /**
+     * Plans one block and everything nested inside it.
+     *
+     * Ordinals are per label, and a client counts under its own name: `client[steve][0]` and
+     * `client[alex][0]` rather than a shared counter, so adding a client to a test cannot renumber
+     * another one.
+     */
+    private fun planBlock(
+        test: TestPlan,
+        parent: BlockPlan?,
+        prefix: String,
+        call: IrCall,
+        ordinals: MutableMap<String, Int>,
+        collect: (BlockPlan) -> Unit,
+    ) {
+        val role = call.blockRole() ?: return
+        val body = call.lambdaArgument("body") ?: run {
+            report(call, "a ${role.name.lowercase()} block body must be a lambda literal")
+            return
+        }
+
+        val client = if (role == BlockRole.CLIENT) {
+            call.constArgument("name") ?: DEFAULT_CLIENT
+        } else {
+            ""
+        }
+        val label = if (role == BlockRole.CLIENT) "client[$client]" else "server"
+        val ordinal = ordinals.merge("$prefix/$label", 1, Int::plus)!! - 1
+        val explicitId = call.constArgument("id")
+
+        val block = BlockPlan(
+            id = explicitId?.let { "$prefix/$it" } ?: "$prefix/$label[$ordinal]",
+            role = role,
+            client = client,
+            parent = parent,
+            testId = test.id,
+            call = call,
+            lambda = body,
+        )
+        collect(block)
+        planBlocks(test, block, block.id, body, ordinals) { block.children += it }
     }
 
     private fun IrCall.blockRole(): BlockRole? = when (fqName()) {
@@ -204,6 +296,8 @@ internal class E2ePlanner(
 }
 
 /** Fully qualified names of the DSL entry points, as they appear on resolved IR calls. */
+internal const val DEFAULT_CLIENT: String = "default"
+
 internal object E2eDsl {
     const val PACKAGE: String = "dev.vibeported.mc.e2e"
     const val SUITE: String = "$PACKAGE.suite"
@@ -211,7 +305,13 @@ internal object E2eDsl {
     const val SERVER: String = "$PACKAGE.server"
     const val CLIENT: String = "$PACKAGE.client"
     const val SHARED: String = "$PACKAGE.shared"
+    const val PARALLEL: String = "$PACKAGE.parallel"
+    const val CLIENT_NAME_ANNOTATION: String = "$PACKAGE.MinecraftClientName"
 }
+
+/** Whether a parameter is annotated `@MinecraftClientName`. */
+internal fun IrValueParameter.isClientName(): Boolean =
+    annotations.any { it.type.classFqName?.asString() == E2eDsl.CLIENT_NAME_ANNOTATION }
 
 internal fun IrCall.fqName(): String? = symbol.owner.fqNameWhenAvailable?.asString()
 

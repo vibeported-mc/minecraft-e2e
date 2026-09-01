@@ -46,6 +46,19 @@ public class SuiteBuilder internal constructor(
 }
 
 /**
+ * Runs the blocks inside it at the same time, and returns when the last of them finishes.
+ *
+ * Everything else in a test happens one step after another, which is what makes a test readable.
+ * This is for the cases where the point *is* simultaneity -- two clients looking at each other,
+ * two players racing for the same block -- and it is deliberately the only way to get it, so a
+ * reader can tell at a glance which parts of a test overlap.
+ *
+ * Like a test body, this may contain only `server`/`client` blocks.
+ */
+public suspend fun E2eScope.parallel(body: suspend E2eScope.() -> Unit): Unit =
+    throw E2ePluginNotAppliedException("parallel { }")
+
+/**
  * Runs [body] on the server and suspends until it finishes.
  *
  * [body] is lifted out of its enclosing closure at compile time, so it may not reference anything
@@ -59,7 +72,10 @@ public suspend fun E2eBlockScope.server(
 ): Unit = throw E2ePluginNotAppliedException("server { }")
 
 /**
- * Runs [body] on the client with the given [index] and suspends until it finishes.
+ * Runs [body] on the client called [name] and suspends until it finishes.
+ *
+ * The name is the client's username as well as its address, and it must be a string literal: the
+ * compiler collects every name a suite mentions so the run starts exactly those clients.
  *
  * Legal inside a `server { }` block too: the server asks the orchestrator to route it onward and
  * awaits the result, which is how one test step can straddle both processes.
@@ -67,7 +83,7 @@ public suspend fun E2eBlockScope.server(
  * @see server for the capture rules, which are identical.
  */
 public suspend fun E2eBlockScope.client(
-    index: Int = 0,
+    @MinecraftClientName name: String = DEFAULT_CLIENT,
     id: String? = null,
     body: suspend ClientScope.() -> Unit,
 ): Unit = throw E2ePluginNotAppliedException("client { }")

@@ -36,6 +36,9 @@ object E2eDiagnostics : KtDiagnosticsContainer() {
     /** A test body is a plan, not code: only shared declarations and blocks belong in it. */
     val E2E_TEST_BODY_NOT_DECLARATIVE: KtDiagnosticFactory0 by error0<KtElement>()
 
+    /** A client name has to be a literal, or it cannot be collected at compile time. */
+    val E2E_CLIENT_NAME_NOT_LITERAL: KtDiagnosticFactory0 by error0<KtElement>()
+
     val E2E_DUPLICATE_NAME: KtDiagnosticFactory1<String> by error1<KtElement, String>()
 
     override fun getRendererFactory(): BaseDiagnosticRendererFactory = E2eErrorMessages
@@ -74,10 +77,17 @@ object E2eErrorMessages : BaseDiagnosticRendererFactory() {
         )
         map.put(
             E2eDiagnostics.E2E_TEST_BODY_NOT_DECLARATIVE,
-            "An e2e test body may only declare shared values and call server/client blocks. It is " +
+            "An e2e test body may only declare shared values and call server/client blocks, "
+                + "optionally grouped in parallel { }; a parallel group holds blocks alone. It is " +
                 "never executed: the compiler reads the blocks out of it as an ordered list of " +
                 "steps for the orchestrator, so there is nowhere for this statement to run. Move " +
                 "it inside a server or client block.",
+        )
+        map.put(
+            E2eDiagnostics.E2E_CLIENT_NAME_NOT_LITERAL,
+            "A client name must be written out as a string literal. The orchestrator starts the " +
+                "clients a suite mentions, and it reads that list from the compiled code, so a name " +
+                "only known at runtime would name a client nobody had started.",
         )
         map.put(
             E2eDiagnostics.E2E_DUPLICATE_NAME,

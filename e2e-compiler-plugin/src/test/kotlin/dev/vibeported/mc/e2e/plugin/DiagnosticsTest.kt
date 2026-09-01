@@ -26,7 +26,9 @@ class DiagnosticsTest {
             import dev.vibeported.mc.e2e.client
             import dev.vibeported.mc.e2e.server
             import dev.vibeported.mc.e2e.shared
+            import dev.vibeported.mc.e2e.parallel
             import dev.vibeported.mc.e2e.suite
+            import dev.vibeported.mc.e2e.waitForPlayer
             import dev.vibeported.mc.e2e.ServerScope
             import kotlinx.serialization.Serializable
 
@@ -36,6 +38,64 @@ class DiagnosticsTest {
             $body
         """.trimIndent()
     )
+
+    @Test
+    fun `a client name computed at runtime is rejected`() {
+        val result = compile(
+            """
+            val who = "steve"
+
+            val s = suite("s") {
+                e2e("t") {
+                    client(who) { }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
+        assertTrue(result.messages.contains("must be written out as a string literal"), result.messages)
+    }
+
+    /** The rule follows the annotation, so it reaches any function that takes a client name. */
+    @Test
+    fun `the literal rule applies to every function that names a client`() {
+        val result = compile(
+            """
+            val who = "steve"
+
+            val s = suite("s") {
+                e2e("t") {
+                    server {
+                        waitForPlayer(who)
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
+        assertTrue(result.messages.contains("must be written out as a string literal"), result.messages)
+    }
+
+    @Test
+    fun `a parallel group may hold only blocks`() {
+        val result = compile(
+            """
+            val s = suite("s") {
+                e2e("t") {
+                    parallel {
+                        client("steve") { }
+                        println("hello")
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(KotlinCompilation.ExitCode.COMPILATION_ERROR, result.exitCode)
+        assertTrue(result.messages.contains("parallel group holds blocks alone"), result.messages)
+    }
 
     @Test
     fun `a block capturing a local is rejected by name`() {

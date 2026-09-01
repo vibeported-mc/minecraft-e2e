@@ -53,8 +53,8 @@ class TransformTest {
         assertEquals(
             listOf(
                 "sample.SuiteKt:movement/block moved/server[0]",
-                "sample.SuiteKt:movement/block moved/server[0]/client[0]",
-                "sample.SuiteKt:movement/block moved/client[0]",
+                "sample.SuiteKt:movement/block moved/server[0]/client[default][0]",
+                "sample.SuiteKt:movement/block moved/client[default][0]",
             ),
             file.blocks.map { it.id.value },
         )
@@ -74,9 +74,71 @@ class TransformTest {
         assertEquals(
             listOf(
                 "sample.SuiteKt:movement/block moved/server[0]",
-                "sample.SuiteKt:movement/block moved/client[0]",
+                "sample.SuiteKt:movement/block moved/client[default][0]",
             ),
-            test.steps.map { it.value },
+            test.steps.flatMap { step -> step.blocks.map { it.value } },
+        )
+    }
+
+    private val namedSource = """
+        package sample
+
+        import dev.vibeported.mc.e2e.client
+        import dev.vibeported.mc.e2e.parallel
+        import dev.vibeported.mc.e2e.server
+        import dev.vibeported.mc.e2e.suite
+        import dev.vibeported.mc.e2e.waitForPlayer
+
+        val movement = suite("movement") {
+            e2e("two clients") {
+                server {
+                    waitForPlayer("steve")
+                    waitForPlayer("alex")
+                }
+
+                parallel {
+                    client("steve") { }
+                    client("alex") { }
+                }
+
+                client("steve") { }
+            }
+        }
+    """.trimIndent()
+
+    /**
+     * Who takes part is decided at compile time, because the orchestrator has to start those
+     * processes before a single block runs.
+     */
+    @Test
+    fun `every client a file mentions reaches the manifest`() {
+        val result = E2eCompilation(workingDir).compile("Suite.kt" to namedSource)
+        assertTrue(result.succeeded, result.messages)
+
+        val file = result.index().files.single()
+        // "alex" has a block; the server only ever names it. Both have to be started either way.
+        assertEquals(listOf("alex", "steve"), file.clients)
+        assertEquals(listOf("alex", "steve"), file.suites.single().tests.single().clients)
+    }
+
+    /** Ordinals count per name, so adding a client cannot renumber another one's blocks. */
+    @Test
+    fun `a parallel group is one step, and ordinals are per client`() {
+        val result = E2eCompilation(workingDir).compile("Suite.kt" to namedSource)
+        assertTrue(result.succeeded, result.messages)
+
+        val test = result.index().files.single().suites.single().tests.single()
+        assertEquals(listOf(false, true, false), test.steps.map { it.parallel })
+        assertEquals(
+            listOf(
+                listOf("sample.SuiteKt:movement/two clients/server[0]"),
+                listOf(
+                    "sample.SuiteKt:movement/two clients/client[steve][0]",
+                    "sample.SuiteKt:movement/two clients/client[alex][0]",
+                ),
+                listOf("sample.SuiteKt:movement/two clients/client[steve][1]"),
+            ),
+            test.steps.map { step -> step.blocks.map { it.value } },
         )
     }
 
@@ -86,7 +148,7 @@ class TransformTest {
         assertTrue(result.succeeded, result.messages)
 
         val nested = result.index().files.single().blocks
-            .single { it.id.value.endsWith("/server[0]/client[0]") }
+            .single { it.id.value.endsWith("/server[0]/client[default][0]") }
 
         assertEquals("CLIENT", nested.role.name)
         assertEquals("sample.SuiteKt:movement/block moved/server[0]", nested.parent?.value)
@@ -136,7 +198,7 @@ class TransformTest {
         // The orchestrator runs nothing itself: it has no game on its classpath, so even the
         // driver is dispatched to the server.
         assertEquals(
-            setOf("server", "client[0]"),
+            setOf("server", "client[default]"),
             test.blocks.map { it.node.toString() }.toSet(),
         )
     }
@@ -180,6 +242,6 @@ class TransformTest {
         assertEquals("count should have been 8", test.failure?.message)
         // The failure keeps the node it actually happened on, even though it reached the
         // orchestrator by way of a response.
-        assertEquals("client[0]", test.failure?.node.toString())
+        assertEquals("client[default]", test.failure?.node.toString())
     }
 }

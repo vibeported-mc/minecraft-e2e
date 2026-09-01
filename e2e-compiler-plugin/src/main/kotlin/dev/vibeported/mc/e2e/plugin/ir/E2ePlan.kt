@@ -33,7 +33,8 @@ internal class SharedPlan(
 internal class BlockPlan(
     val id: String,
     val role: BlockRole,
-    val clientIndex: Int,
+    /** Which client runs it. Empty for a server block. */
+    val client: String,
     /** The enclosing block, or null for a step written straight into the test body. */
     val parent: BlockPlan?,
     val testId: String,
@@ -59,7 +60,28 @@ internal class TestPlan(
     val call: IrCall,
 ) {
     val shared: MutableList<SharedPlan> = mutableListOf()
-    val steps: MutableList<BlockPlan> = mutableListOf()
+
+    /** Ordered steps. A step with more than one block is a `parallel { }` group. */
+    val steps: MutableList<StepPlan> = mutableListOf()
+
+    /**
+     * Names reaching a `@MinecraftClientName` parameter anywhere in the test.
+     *
+     * A test can address a client it never runs a block on -- `waitForPlayer("alex")` from a server
+     * block, say -- and that client still has to exist, so who takes part is decided by every name
+     * mentioned rather than only by who has a block.
+     */
+    val mentioned: MutableSet<String> = mutableSetOf()
+
+    val clients: Set<String> get() = (
+        steps.flatMap { it.blocks }
+            .flatMap { it.selfAndDescendants() }
+            .mapNotNull { it.client.takeIf(String::isNotEmpty) } + mentioned
+        ).toSortedSet()
+}
+
+internal class StepPlan(val parallel: Boolean) {
+    val blocks: MutableList<BlockPlan> = mutableListOf()
 }
 
 internal class SuitePlan(
@@ -85,8 +107,14 @@ internal class FilePlan(
         }
 
     fun blocks(): List<BlockPlan> = suites.flatMap { suite ->
-        suite.tests.flatMap { test -> test.steps.flatMap { it.selfAndDescendants() } }
+        suite.tests.flatMap { test ->
+            test.steps.flatMap { step -> step.blocks.flatMap { it.selfAndDescendants() } }
+        }
     }
+
+    /** Every client named anywhere in the file, which is who the orchestrator has to start. */
+    fun clients(): Set<String> =
+        suites.flatMap { it.tests }.flatMap { it.clients }.toSortedSet()
 
     fun shared(): List<SharedPlan> = suites.flatMap { suite -> suite.tests.flatMap { it.shared } }
 

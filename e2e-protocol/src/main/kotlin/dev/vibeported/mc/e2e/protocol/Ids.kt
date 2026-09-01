@@ -31,20 +31,24 @@ public enum class NodeRole {
 }
 
 /**
- * Addresses one participant. There is exactly one orchestrator and one server for now; clients are
- * distinguished by [index], so `client(1) { }` addresses the second client.
+ * Addresses one participant. There is one orchestrator and one server; clients are distinguished by
+ * name, so `client("steve") { }` addresses the client playing as steve.
+ *
+ * A name rather than an index because a test says who it means, and a report that says
+ * `client[steve]` needs no lookup to read.
  */
 @Serializable
 public data class NodeId(
     public val role: NodeRole,
-    public val index: Int = 0,
+    /** The client name for a client, and empty for the server and the orchestrator. */
+    public val name: String = "",
 ) {
     override fun toString(): String =
-        if (role == NodeRole.CLIENT) "client[$index]" else role.name.lowercase()
+        if (role == NodeRole.CLIENT) "client[$name]" else role.name.lowercase()
 
     public companion object {
         public val ORCHESTRATOR: NodeId = NodeId(NodeRole.ORCHESTRATOR)
         public val SERVER: NodeId = NodeId(NodeRole.SERVER)
-        public fun client(index: Int = 0): NodeId = NodeId(NodeRole.CLIENT, index)
+        public fun client(name: String): NodeId = NodeId(NodeRole.CLIENT, name)
     }
 }

@@ -29,6 +29,8 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
     @get:Input abstract val serverAddress: Property<String>
     @get:Input abstract val startupTimeoutSeconds: Property<Long>
     @get:Input abstract val testTimeoutSeconds: Property<Long>
+    @get:Input abstract val callTimeoutSeconds: Property<Long>
+    @get:Input abstract val actionTimeoutSeconds: Property<Long>
     @get:OutputFile abstract val planFile: RegularFileProperty
 
     init {
@@ -59,7 +61,9 @@ abstract class HarvestLaunchPlanTask : DefaultTask() {
                 append("\"reportDir\":").append(quote(reportDir.get().asFile.absolutePath)).append(",")
                 append("\"serverAddress\":").append(quote(serverAddress.get())).append(",")
                 append("\"startupTimeoutSeconds\":").append(startupTimeoutSeconds.get()).append(",")
-                append("\"testTimeoutSeconds\":").append(testTimeoutSeconds.get())
+                append("\"testTimeoutSeconds\":").append(testTimeoutSeconds.get()).append(",")
+                append("\"callTimeoutSeconds\":").append(callTimeoutSeconds.get()).append(",")
+                append("\"actionTimeoutSeconds\":").append(actionTimeoutSeconds.get())
                 append("}")
             }
         )

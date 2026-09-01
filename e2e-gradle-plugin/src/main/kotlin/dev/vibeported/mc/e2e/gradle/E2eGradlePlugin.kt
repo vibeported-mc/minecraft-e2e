@@ -35,11 +35,12 @@ class E2eGradlePlugin : Plugin<Project> {
 
         val settings = project.extensions.create("mcE2E", McE2eExtension::class.java, project).apply {
             sourceSetName.convention("e2eTest")
-            clients.convention(1)
             serverAddress.convention("localhost:25565")
             reportDir.convention(project.layout.buildDirectory.dir("reports/e2e"))
             startupTimeoutSeconds.convention(900L)
             testTimeoutSeconds.convention(300L)
+            callTimeoutSeconds.convention(120L)
+            actionTimeoutSeconds.convention(10L)
             javaVersion.convention(25)
             e2eModId.convention(modId.map { "${it}_e2e" }.orElse("e2e_tests"))
         }
@@ -147,13 +148,11 @@ class E2eGradlePlugin : Plugin<Project> {
         }
 
         val seedRunDirs = project.tasks.register("seedE2eRunDirs") { task ->
-            task.description = "Writes the settings an unattended server and client need."
+            task.description = "Writes the settings an unattended server needs."
             task.outputs.dir(serverRunDir)
-            task.outputs.dir(clientRunDir)
             val extraProperties = settings.serverProperties.getOrElse(emptyList())
             task.doLast {
                 seedServer(serverRunDir.asFile, extraProperties)
-                seedClient(clientRunDir.asFile)
             }
         }
 
@@ -163,12 +162,16 @@ class E2eGradlePlugin : Plugin<Project> {
             task.group = "verification"
             task.description = "Records how ModDevGradle would launch the e2e client and server."
             task.serverRunTask.set("runE2eServer")
-            task.clientRunTasks.set(List(settings.clients.get()) { "runE2eClient" })
+            // One harvested command is enough: the orchestrator spawns a process per client the
+            // suites name, each with its own username and game directory.
+            task.clientRunTasks.set(listOf("runE2eClient"))
             task.indexFiles.from(indexDir.map { it.file("META-INF/e2e/index.json") })
             task.reportDir.set(settings.reportDir)
             task.serverAddress.set(settings.serverAddress)
             task.startupTimeoutSeconds.set(settings.startupTimeoutSeconds)
             task.testTimeoutSeconds.set(settings.testTimeoutSeconds)
+            task.callTimeoutSeconds.set(settings.callTimeoutSeconds)
+            task.actionTimeoutSeconds.set(settings.actionTimeoutSeconds)
             task.planFile.set(planFile)
             task.dependsOn(compileSuites, generateMetadata, project.tasks.named(suites.processResourcesTaskName))
             task.dependsOn(project.tasks.matching { it.name.startsWith("prepare") && it.name.endsWith("Run") })
@@ -235,38 +238,5 @@ class E2eGradlePlugin : Plugin<Project> {
         val lines = defaults.filterNot { it.substringBefore('=') in overridden } + extra
         File(dir, "server.properties")
             .writeText(lines.joinToString(System.lineSeparator(), postfix = System.lineSeparator()))
-    }
-
-    /**
-     * Clears the screens a fresh client stops on, none of which anyone is there to click.
-     *
-     * A first launch shows the accessibility onboarding, and a first multiplayer join shows the
-     * third-party server warning; NeoForge adds one of its own whenever any mod loads with a
-     * warning, which is rarely even ours. Each one looks exactly like a hang from the outside.
-     *
-     * Only written when absent, so a run directory someone has since adjusted by hand is left alone.
-     */
-    private fun seedClient(dir: File) {
-        val config = File(dir, "config")
-        config.mkdirs()
-        val warnings = File(config, "neoforge-client.toml")
-        if (!warnings.exists()) {
-            warnings.writeText("showLoadWarnings = false" + System.lineSeparator())
-        }
-
-        val options = File(dir, "options.txt")
-        if (!options.exists()) {
-            dir.mkdirs()
-            options.writeText(
-                listOf(
-                    "onboardAccessibility:false",
-                    "skipMultiplayerWarning:true",
-                    "narrator:0",
-                    "tutorialStep:none",
-                    // An automated client spends its life unfocused.
-                    "pauseOnLostFocus:false",
-                ).joinToString(System.lineSeparator(), postfix = System.lineSeparator())
-            )
-        }
     }
 }

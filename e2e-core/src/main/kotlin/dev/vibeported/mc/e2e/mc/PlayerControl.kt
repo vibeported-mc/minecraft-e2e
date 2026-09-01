@@ -3,8 +3,8 @@ package dev.vibeported.mc.e2e.mc
 import dev.vibeported.mc.e2e.rpc.PlayerAction
 import dev.vibeported.mc.e2e.rpc.PlayerExpectation
 import net.minecraft.client.Minecraft
+import net.minecraft.client.player.LocalPlayer
 import net.minecraft.commands.arguments.EntityAnchorArgument
-import net.minecraft.core.BlockPos
 import net.minecraft.server.MinecraftServer
 import net.minecraft.util.Mth
 import net.minecraft.world.phys.Vec3
@@ -40,6 +40,12 @@ internal fun MinecraftServer.applyPlayerAction(client: String, action: PlayerAct
 
         is PlayerAction.LookAt ->
             player.lookAt(EntityAnchorArgument.Anchor.EYES, Vec3(action.x, action.y, action.z))
+
+        is PlayerAction.LookAtPlayer -> {
+            val target = playerList.getPlayerByName(action.target)
+                ?: error("e2e: no player named `${action.target}` to look at")
+            player.lookAt(EntityAnchorArgument.Anchor.EYES, target, EntityAnchorArgument.Anchor.EYES)
+        }
     }
 }
 
@@ -59,13 +65,12 @@ internal suspend fun awaitPlayerState(
 
     while (true) {
         val player = minecraft.player
-        if (player != null && expect.isMetBy(player.eyePosition, player.blockPosition(), player.yRot, player.xRot)) {
-            return null
-        }
+        if (player != null && expect.isMetBy(player, minecraft)) return null
+
         if (tickClock.current - startedTick >= timeoutTicks) {
             return when (expect) {
                 is PlayerExpectation.AtBlock -> "the client was at ${player?.blockPosition()}"
-                is PlayerExpectation.Facing ->
+                is PlayerExpectation.Facing, is PlayerExpectation.FacingPlayer ->
                     "the client was facing yaw=${player?.yRot?.toInt()} pitch=${player?.xRot?.toInt()}"
             }
         }
@@ -73,11 +78,23 @@ internal suspend fun awaitPlayerState(
     }
 }
 
-private fun PlayerExpectation.isMetBy(eye: Vec3, at: BlockPos, yaw: Float, pitch: Float): Boolean =
-    when (this) {
+private fun PlayerExpectation.isMetBy(player: LocalPlayer, minecraft: Minecraft): Boolean {
+    val at = player.blockPosition()
+    return when (this) {
         is PlayerExpectation.AtBlock -> at.x == x && at.y == y && at.z == z
-        is PlayerExpectation.Facing -> offBy(eye, Vec3(x, y, z), yaw, pitch) <= FACING_TOLERANCE_DEGREES
+
+        is PlayerExpectation.Facing ->
+            offBy(player.eyePosition, Vec3(x, y, z), player.yRot, player.xRot) <= FACING_TOLERANCE_DEGREES
+
+        is PlayerExpectation.FacingPlayer -> {
+            // The other player as this client currently sees them, so a target that is still
+            // settling into position does not make the check pass against where it used to be.
+            val other = minecraft.level?.players()?.firstOrNull { it.name.string == target }
+            other != null &&
+                offBy(player.eyePosition, other.eyePosition, player.yRot, player.xRot) <= FACING_TOLERANCE_DEGREES
+        }
     }
+}
 
 /**
  * How far the player is from facing [target], in degrees.

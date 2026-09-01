@@ -91,14 +91,32 @@ public interface NodeScope : E2eBlockScope {
 
     /** Turns a player to face [pos], returning once that client is looking at it. @see teleport */
     public suspend fun lookAt(@MinecraftClientName client: String = DEFAULT_CLIENT, pos: BlockPos)
+
+    /** Turns one player to face another, returning once they are. @see teleport */
+    public suspend fun lookAtPlayer(
+        @MinecraftClientName client: String = DEFAULT_CLIENT,
+        @MinecraftClientName target: String,
+    )
+
+    /**
+     * The client these calls mean when none is named.
+     *
+     * Inside a `client("steve") { }` block that is steve, so the body can say `teleport(pos)` and
+     * mean itself. On the server there is no such obvious answer, so it is the default client.
+     */
+    public val thisClient: String
 }
 
 /** @see NodeScope.teleport */
 public suspend fun NodeScope.teleport(pos: BlockPos, flying: Boolean = false): Unit =
-    teleport(DEFAULT_CLIENT, pos, flying)
+    teleport(thisClient, pos, flying)
 
 /** @see NodeScope.lookAt */
-public suspend fun NodeScope.lookAt(pos: BlockPos): Unit = lookAt(DEFAULT_CLIENT, pos)
+public suspend fun NodeScope.lookAt(pos: BlockPos): Unit = lookAt(thisClient, pos)
+
+/** @see NodeScope.lookAtPlayer */
+public suspend fun NodeScope.lookAtPlayer(@MinecraftClientName target: String): Unit =
+    lookAtPlayer(thisClient, target)
 
 /**
  * Receiver of a `server { }` block, which runs in the dedicated server process, **on the server
@@ -127,8 +145,8 @@ public interface ServerScope : NodeScope {
 
 /** Receiver of a `client { }` block, which runs on that client's render thread. @see ServerScope */
 public interface ClientScope : NodeScope {
-    /** Which client this is, when a test runs more than one. */
-    public val clientIndex: Int
+    /** The name this client runs under, which is also its player's name. */
+    public val clientName: String
 
     public val minecraft: Minecraft
 

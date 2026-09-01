@@ -1,5 +1,6 @@
 package dev.vibeported.mc.e2e.mc
 
+import dev.vibeported.mc.e2e.DEFAULT_CLIENT
 import dev.vibeported.mc.e2e.protocol.NodeId
 import net.neoforged.bus.api.IEventBus
 import net.neoforged.fml.ModContainer
@@ -27,8 +28,10 @@ class E2eMod(eventBus: IEventBus, container: ModContainer) {
             when (role.uppercase()) {
                 "SERVER" -> ServerNode.install(host, port)
                 "CLIENT" -> {
-                    val index = System.getProperty("e2e.node.index")?.toIntOrNull() ?: 0
-                    ClientNode.install(host, port, NodeId.client(index))
+                    // The orchestrator names the client on the command line; the same name is
+                    // the player's username, which is how a test addresses it.
+                    val name = System.getProperty("e2e.node.name") ?: DEFAULT_CLIENT
+                    ClientNode.install(host, port, NodeId.client(name))
                 }
 
                 else -> error("e2e: unknown $ROLE_PROPERTY '$role'")
