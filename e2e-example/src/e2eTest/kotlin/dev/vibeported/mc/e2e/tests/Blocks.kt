@@ -14,6 +14,8 @@ import dev.vibeported.mc.e2e.isAlive
 import dev.vibeported.mc.e2e.lookAt
 import dev.vibeported.mc.e2e.lookAtPlayer
 import dev.vibeported.mc.e2e.makeScreenshot
+import dev.vibeported.mc.e2e.mouseDown
+import dev.vibeported.mc.e2e.mouseUp
 import dev.vibeported.mc.e2e.parallel
 import dev.vibeported.mc.e2e.pixelsPerSecond
 import dev.vibeported.mc.e2e.playerInventory
@@ -196,6 +198,12 @@ val blocks = suite("blocks") {
                     scroll(1.0)
                     makeScreenshot("scrolled up")
 
+                    // Three unhurried seconds across the whole inventory. Nothing is being tested
+                    // by it; it is there to be watched, which is the only way to judge whether the
+                    // pointer tracks smoothly and lands where it was sent.
+                    moveToSlot(InventorySlot.INV_1_1, over = 3.seconds)
+                    makeScreenshot("after a slow sweep")
+
                     assertSlot("the sword should be in the main hand", selectedHotbar) {
                         it.item == Items.DIAMOND_SWORD
                     }
@@ -265,6 +273,16 @@ val blocks = suite("blocks") {
                 // Within arm's length first: the diagonal perch the last step left alex on is nearly
                 // six blocks from the gold, and no amount of holding attack reaches that far.
                 teleport(target.get().above(2), flying = true)
+
+                // Mining by hand for a moment before handing over to breakBlock, because a button
+                // held in the world is the case the overlay has to get right: no screen, no pointer,
+                // and attack down for as long as it takes.
+                lookAt(target.get())
+                mouseDown(MouseButton.LEFT)
+                awaitTicks(6)
+                makeScreenshot("mining, attack held")
+                mouseUp(MouseButton.LEFT)
+
                 breakBlock(target.get(), timeoutSec(20))
             }
 

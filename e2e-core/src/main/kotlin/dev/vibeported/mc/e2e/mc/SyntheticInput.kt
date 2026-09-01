@@ -61,14 +61,19 @@ internal object SyntheticInput {
     /**
      * The buttons the framework is currently holding down, by GLFW code.
      *
-     * Tracked here rather than read back from Minecraft because Minecraft only tracks it when no
-     * screen is open: the assignment to `isLeftPressed` and friends lives in the branch `onButton`
-     * takes when there is no screen. Inside an inventory -- exactly where a drag needs showing --
-     * nothing over there knows.
+     * This is the physical state of the input, which is the only honest thing to show: what the
+     * framework pressed and has not yet released. Minecraft's own view is no substitute -- it only
+     * tracks buttons while no screen is open, and inside an inventory, exactly where a gesture most
+     * needs showing, nothing over there knows.
      */
     private val held = mutableSetOf<Int>()
 
+    /** When each button was last let go, so an indicator can fade rather than blink out. */
+    private val releasedAt = mutableMapOf<Int, Long>()
+
     fun isHeld(button: Int): Boolean = button in held
+
+    fun releasedAtMillis(button: Int): Long = releasedAt[button] ?: 0
 
     /** The last scroll, and when, so an indicator can show it and then fade. */
     var lastScroll: Double = 0.0
@@ -77,7 +82,12 @@ internal object SyntheticInput {
         private set
 
     fun button(minecraft: Minecraft, button: Int, action: Int) {
-        if (action == PRESS) held += button else held -= button
+        if (action == PRESS) {
+            held += button
+        } else {
+            held -= button
+            releasedAt[button] = System.currentTimeMillis()
+        }
         dispatch {
             (minecraft.mouseHandler as MouseHandlerInvoker)
                 .invokeOnButton(minecraft.window.handle(), MouseButtonInfo(button, 0), action)

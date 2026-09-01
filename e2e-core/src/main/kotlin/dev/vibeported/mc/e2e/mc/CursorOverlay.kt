@@ -3,20 +3,20 @@ package dev.vibeported.mc.e2e.mc
 import dev.vibeported.mc.e2e.mixin.CursorRequestAccessor
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.GuiGraphicsExtractor
-import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.resources.Identifier
 import org.lwjgl.glfw.GLFW
 
 /**
- * Draws the pointer a test is driving, because nothing else does.
+ * Draws what the framework is doing to the mouse, because nothing else does.
  *
- * The framework moves a pointer that has no picture: the machine's own cursor belongs to whoever is
- * at the keyboard and is somewhere else entirely. Without this, a screenshot of a drag is a
- * screenshot of an inventory with nothing happening in it.
+ * The machine's own cursor belongs to whoever is at the keyboard and is somewhere else entirely, so
+ * without this a screenshot of a drag is a screenshot of an inventory with nothing happening in it.
  *
- * Only while a screen is open. In the world the mouse is grabbed and movement is camera rotation,
- * so there is no position a pointer could point at.
+ * What it shows is the **physical state of the input**: the buttons this framework has pressed and
+ * not yet released. Deliberately not Minecraft's opinion of them -- Minecraft only tracks buttons
+ * while no screen is open, and even where it does, what it reports is an interpretation. A held
+ * button is drawn as held for exactly as long as it is held, however long that turns out to be.
  */
 internal object CursorOverlay {
 
@@ -24,28 +24,21 @@ internal object CursorOverlay {
     private const val SOURCE = 32
     private const val DRAWN = 16
 
-    private const val MOUSE_SOURCE_WIDTH = 32
-    private const val MOUSE_SOURCE_HEIGHT = 32
-    private const val MOUSE_DRAWN_WIDTH = 16
-    private const val MOUSE_DRAWN_HEIGHT = 16
-
     /** Clear of the aim point, so the glyph never covers the thing being clicked. */
     private const val MOUSE_OFFSET_X = 9
     private const val MOUSE_OFFSET_Y = 8
 
-    /** Long enough to notice in a screenshot, short enough not to outlive the gesture. */
-    private const val SCROLL_SHOWN_MILLIS = 600L
-
-    private const val NO_TINT = -1
-
     /**
-     * The mouse while a stack rides the cursor.
+     * How long an indicator takes to go out after the input ends.
      *
-     * Carrying is not a held button -- Minecraft moves an item with a click, a move and another
-     * click, and holding the button is the quick-craft gesture instead -- so the state has a colour
-     * of its own rather than a filled button that would be a lie about what the mouse is doing.
+     * A click can be a single tick, which at sixty frames a second is three of them -- gone before
+     * anyone watching registers that it happened. Fading leaves a trace long enough to see while
+     * never claiming the button is still down: full brightness means held, dimmer means just
+     * released.
      */
-    private const val CARRYING_TINT = 0xFFFFC46B.toInt()
+    private const val FADE_MILLIS = 450L
+
+    private const val OPAQUE = -1
 
     /**
      * Where each cursor points from.
@@ -73,14 +66,19 @@ internal object CursorOverlay {
         Identifier.fromNamespaceAndPath("e2e", "textures/gui/mouse/$part.png")
 
     fun render(graphics: GuiGraphicsExtractor, minecraft: Minecraft) {
-        if (minecraft.gui.screen() == null) return
-
-        val window = minecraft.window
-        val x = minecraft.mouseHandler.getScaledXPos(window).toInt()
-        val y = minecraft.mouseHandler.getScaledYPos(window).toInt()
-
-        drawCursor(graphics, x, y, cursorName(graphics))
-        drawMouseState(graphics, x, y, isCarrying(minecraft))
+        if (minecraft.gui.screen() != null) {
+            // A pointer only means something in a screen: in the world the mouse is grabbed and
+            // movement is camera rotation, so there is no position to draw an arrow at.
+            val window = minecraft.window
+            val x = minecraft.mouseHandler.getScaledXPos(window).toInt()
+            val y = minecraft.mouseHandler.getScaledYPos(window).toInt()
+            drawCursor(graphics, x, y, cursorName(graphics))
+            drawMouseState(graphics, x + MOUSE_OFFSET_X, y + MOUSE_OFFSET_Y)
+        } else {
+            // The buttons still matter out here -- mining holds attack for seconds at a time -- so
+            // the glyph parks beside the crosshair, where whoever is watching is already looking.
+            drawMouseState(graphics, graphics.guiWidth() / 2 + 12, graphics.guiHeight() / 2 + 4)
+        }
     }
 
     /**
@@ -96,74 +94,83 @@ internal object CursorOverlay {
 
     private fun drawCursor(graphics: GuiGraphicsExtractor, x: Int, y: Int, name: String) {
         val (hotspotX, hotspotY) = HOTSPOTS[name] ?: (1 to 0)
-        graphics.blit(
-            RenderPipelines.GUI_TEXTURED,
-            cursorTexture(name),
-            x - hotspotX,
-            y - hotspotY,
-            0f,
-            0f,
-            DRAWN,
-            DRAWN,
-            SOURCE,
-            SOURCE,
-            SOURCE,
-            SOURCE,
-            NO_TINT,
-        )
+        blit(graphics, cursorTexture(name), x - hotspotX, y - hotspotY, OPAQUE)
     }
 
     /**
-     * A little mouse beside the pointer, with the held buttons filled in.
+     * A little mouse with the pressed buttons filled in.
      *
      * Composed from parts rather than a sprite per combination: two buttons held at once has to
      * read as two buttons held at once, and three buttons against three scroll states would
      * otherwise be twenty-four pictures to draw.
      */
-    /** Whether a stack is riding the cursor, which only a container screen can answer. */
-    private fun isCarrying(minecraft: Minecraft): Boolean {
-        val screen = minecraft.gui.screen() as? AbstractContainerScreen<*> ?: return false
-        return !screen.menu.carried.isEmpty
-    }
+    private fun drawMouseState(graphics: GuiGraphicsExtractor, x: Int, y: Int) {
+        blitMouse(graphics, "body", x, y, OPAQUE)
 
-    private fun drawMouseState(graphics: GuiGraphicsExtractor, x: Int, y: Int, carrying: Boolean) {
-        val left = x + MOUSE_OFFSET_X
-        val top = y + MOUSE_OFFSET_Y
-
-        blitMouse(graphics, "body", left, top, if (carrying) CARRYING_TINT else NO_TINT)
-
-        if (SyntheticInput.isHeld(GLFW.GLFW_MOUSE_BUTTON_LEFT)) blitMouse(graphics, "left", left, top)
-        if (SyntheticInput.isHeld(GLFW.GLFW_MOUSE_BUTTON_RIGHT)) blitMouse(graphics, "right", left, top)
-        if (SyntheticInput.isHeld(GLFW.GLFW_MOUSE_BUTTON_MIDDLE)) blitMouse(graphics, "wheel", left, top)
+        blitButton(graphics, "left", GLFW.GLFW_MOUSE_BUTTON_LEFT, x, y)
+        blitButton(graphics, "right", GLFW.GLFW_MOUSE_BUTTON_RIGHT, x, y)
+        blitButton(graphics, "wheel", GLFW.GLFW_MOUSE_BUTTON_MIDDLE, x, y)
 
         // The arrow alone: a wheel that turned is not a wheel that was pressed, and filling the
-        // button as well would say the middle button was down when it was not.
-        val sinceScroll = System.currentTimeMillis() - SyntheticInput.lastScrollAtMillis
-        if (SyntheticInput.lastScroll != 0.0 && sinceScroll < SCROLL_SHOWN_MILLIS) {
-            blitMouse(graphics, if (SyntheticInput.lastScroll > 0) "scroll_up" else "scroll_down", left, top)
+        // button as well would say the middle button was down when it never went down.
+        if (SyntheticInput.lastScroll != 0.0) {
+            val alpha = fadedSince(SyntheticInput.lastScrollAtMillis)
+            if (alpha != 0) {
+                val part = if (SyntheticInput.lastScroll > 0) "scroll_up" else "scroll_down"
+                blitMouse(graphics, part, x, y, alpha)
+            }
         }
     }
 
-    private fun blitMouse(
+    /** Full while the button is down, then fading out from the moment it was let go. */
+    private fun blitButton(
         graphics: GuiGraphicsExtractor,
         part: String,
+        button: Int,
         x: Int,
         y: Int,
-        tint: Int = NO_TINT,
+    ) {
+        val alpha = if (SyntheticInput.isHeld(button)) {
+            OPAQUE
+        } else {
+            fadedSince(SyntheticInput.releasedAtMillis(button))
+        }
+        if (alpha != 0) blitMouse(graphics, part, x, y, alpha)
+    }
+
+    /** An ARGB tint going from opaque to nothing over [FADE_MILLIS]. Zero once it has faded out. */
+    private fun fadedSince(atMillis: Long): Int {
+        if (atMillis == 0L) return 0
+        val elapsed = System.currentTimeMillis() - atMillis
+        if (elapsed >= FADE_MILLIS) return 0
+        val alpha = (255L * (FADE_MILLIS - elapsed) / FADE_MILLIS).toInt().coerceIn(0, 255)
+        return (alpha shl 24) or 0xFFFFFF
+    }
+
+    private fun blitMouse(graphics: GuiGraphicsExtractor, part: String, x: Int, y: Int, tint: Int) {
+        blit(graphics, mouseTexture(part), x, y, tint)
+    }
+
+    private fun blit(
+        graphics: GuiGraphicsExtractor,
+        texture: Identifier,
+        x: Int,
+        y: Int,
+        tint: Int,
     ) {
         graphics.blit(
             RenderPipelines.GUI_TEXTURED,
-            mouseTexture(part),
+            texture,
             x,
             y,
             0f,
             0f,
-            MOUSE_DRAWN_WIDTH,
-            MOUSE_DRAWN_HEIGHT,
-            MOUSE_SOURCE_WIDTH,
-            MOUSE_SOURCE_HEIGHT,
-            MOUSE_SOURCE_WIDTH,
-            MOUSE_SOURCE_HEIGHT,
+            DRAWN,
+            DRAWN,
+            SOURCE,
+            SOURCE,
+            SOURCE,
+            SOURCE,
             tint,
         )
     }
