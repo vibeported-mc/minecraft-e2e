@@ -16,7 +16,8 @@ import java.io.File
 /**
  * Everything a build needs to run end-to-end tests against a real NeoForge server and client.
  *
- * It applies Kotlin, serialization and ModDevGradle, creates the source set the suites live in,
+ * It applies Kotlin and serialization, configures the ModDevGradle the consuming build applied,
+ * creates the source set the suites live in,
  * generates that mod's metadata, applies the e2e compiler plugin to it, registers the two game runs,
  * seeds their directories, and adds `runE2eTests`. A consuming build is the plugins block and one
  * `mcE2E { }` block.
@@ -30,7 +31,6 @@ class E2eGradlePlugin : Plugin<Project> {
     override fun apply(project: Project) {
         project.plugins.apply("org.jetbrains.kotlin.jvm")
         project.plugins.apply("org.jetbrains.kotlin.plugin.serialization")
-        project.plugins.apply("net.neoforged.moddev")
 
         val settings = project.extensions.create("mcE2E", McE2eExtension::class.java, project).apply {
             sourceSetName.convention("e2eTest")
@@ -87,6 +87,15 @@ class E2eGradlePlugin : Plugin<Project> {
         compilerPlugin: FileCollection,
         orchestrator: FileCollection,
     ) {
+        // Applied by the consuming build, not by this plugin, and deliberately so. This plugin
+        // lives in an included build, so applying ModDevGradle from here would load a second copy of
+        // it beside the one every other module uses. Two copies both apply `gradle-idea-ext` to the
+        // root project during an IDE import, and the second collides on the `settings` extension --
+        // an import that fails with an error naming neither plugin. One classloader, no collision.
+        require(project.plugins.hasPlugin("net.neoforged.moddev")) {
+            "The e2e plugin configures ModDevGradle rather than applying it, so a build using it " +
+                "needs `id(\"net.neoforged.moddev\")` in its own plugins block."
+        }
         val neoForge = project.extensions.getByType(NeoForgeExtension::class.java)
         val modId = settings.e2eModId.get()
 
@@ -111,14 +120,21 @@ class E2eGradlePlugin : Plugin<Project> {
             }
         }
 
+        // Through the Kotlin plugin's own configuration rather than as a `-Xplugin=` string in
+        // freeCompilerArgs. Both reach the compiler, but only this one is part of the model an IDE
+        // imports: a raw argument is an opaque string it never parses into a plugin, so the
+        // checkers never run in the editor and a rejected capture shows up only at build time.
+        val pluginClasspath =
+            "kotlinCompilerPluginClasspath" + suites.name.replaceFirstChar { it.uppercase() }
+        val pluginDependency = project.configurations.getByName("e2eCompilerPlugin")
+        project.configurations.named(pluginClasspath).configure { it.extendsFrom(pluginDependency) }
+
         val compileSuites = project.tasks.named(suites.getCompileTaskName("kotlin"), KotlinCompile::class.java)
         compileSuites.configure { task ->
-            task.inputs.files(compilerPlugin)
             task.outputs.dir(indexDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {
-                    compilerPlugin.files.map { "-Xplugin=${it.absolutePath}" } +
-                        listOf("-P", "plugin:dev.vibeported.mc.e2e:indexDir=${indexDir.get().asFile.absolutePath}")
+                    listOf("-P", "plugin:dev.vibeported.mc.e2e:indexDir=${indexDir.get().asFile.absolutePath}")
                 }
             )
         }

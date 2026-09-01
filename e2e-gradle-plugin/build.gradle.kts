@@ -15,9 +15,14 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 dependencies {
-    // This plugin both applies ModDevGradle and configures it, and hands the real NeoForgeExtension
-    // to the consuming build, so it has to be on the runtime classpath rather than compileOnly.
-    implementation("net.neoforged:moddev-gradle:2.0.144")
+    // compileOnly, and that is load-bearing. This plugin lives in an included build, so anything on
+    // its runtime classpath is exported onto the consuming script's plugin classpath -- a second copy
+    // of ModDevGradle beside the one the consuming build applies itself. MDG applies gradle-idea-ext
+    // to the *root* project, and Gradle's already-applied check is per Class object, so the second
+    // copy does not recognise the first one's work and collides on the `settings` extension. The
+    // failure names neither plugin and only bites during an IDE import. The consuming build applies
+    // MDG itself, so these types are on the classpath at runtime regardless.
+    compileOnly("net.neoforged:moddev-gradle:2.0.144")
     implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
 }
 

@@ -39,16 +39,20 @@ val generatedIndex = layout.buildDirectory.dir("generated/e2e/index")
 
 sourceSets.main.get().resources.srcDir(generatedIndex)
 
+// Through the Kotlin plugin's own configuration rather than as a `-Xplugin=` string in
+// freeCompilerArgs. Both reach the compiler, but only this one is part of the model an IDE imports:
+// a raw argument is an opaque string it never parses into a plugin, so the checkers never run in
+// the editor and a rejected capture shows up only at build time.
+configurations.named("kotlinCompilerPluginClasspathMain") { extendsFrom(e2eCompilerPlugin) }
+
 tasks.named<KotlinCompile>("compileKotlin") {
-    inputs.files(e2eCompilerPlugin)
     outputs.dir(generatedIndex)
     compilerOptions.freeCompilerArgs.addAll(
         provider {
-            e2eCompilerPlugin.files.map { "-Xplugin=${it.absolutePath}" } +
-                listOf(
-                    "-P",
-                    "plugin:dev.vibeported.mc.e2e:indexDir=${generatedIndex.get().asFile.absolutePath}",
-                )
+            listOf(
+                "-P",
+                "plugin:dev.vibeported.mc.e2e:indexDir=${generatedIndex.get().asFile.absolutePath}",
+            )
         }
     )
 }

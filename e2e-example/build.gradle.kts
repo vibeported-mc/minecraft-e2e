@@ -1,4 +1,8 @@
 plugins {
+    // Applied here rather than by the e2e plugin, so that exactly one copy of ModDevGradle is
+    // loaded for the whole build. See the comment in E2eGradlePlugin for what two copies do to an
+    // IDE import.
+    alias(libs.plugins.moddev)
     id("dev.vibeported.mc.e2e")
 }
 

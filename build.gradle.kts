@@ -4,6 +4,15 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
+    // Declared here, and never applied here. A plugin named in the root build lands in the
+    // root-project classloader scope, which is the parent of every subproject scope, so all five
+    // modules share one copy of ModDevGradle. Left to themselves they would not: `:e2e-example`
+    // carries an extra plugin from the included build, so Gradle gives it a scope of its own and
+    // loads ModDevGradle into it a second time. MDG applies `gradle-idea-ext` to the *root* project,
+    // and Gradle's already-applied check is per Class object, so the second copy does not recognise
+    // the first one's work and collides on the `settings` extension -- an IDE import that fails
+    // naming neither plugin.
+    alias(libs.plugins.moddev) apply false
 }
 
 // `subprojects { }` runs before the subprojects are configured, so their own catalog extension
