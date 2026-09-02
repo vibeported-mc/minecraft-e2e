@@ -19,6 +19,7 @@ import dev.vibeported.mc.e2e.dsl.makeScreenshot
 import dev.vibeported.mc.e2e.dsl.pixelsPerSecond
 import dev.vibeported.mc.e2e.dsl.playerInventory
 import dev.vibeported.mc.e2e.dsl.positionOf
+import dev.vibeported.mc.e2e.dsl.orbitPlayer
 import dev.vibeported.mc.e2e.dsl.record
 import dev.vibeported.mc.e2e.dsl.RecordingOptions
 import dev.vibeported.mc.e2e.dsl.teleport
@@ -37,6 +38,7 @@ import net.minecraft.world.item.Items
 import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.StairBlock
 import net.minecraft.world.level.block.state.properties.StairsShape
+import kotlin.math.hypot
 import kotlin.time.Duration.Companion.seconds
 
 /** Far from spawn and high up, so nothing is there by accident and nothing holds a player up. */
@@ -57,7 +59,7 @@ private const val RING_LAST = RING_SIDE - 1
 
 val blocks = suite("blocks") {
 
-    e2e("one client is recorded while both players circle the block") {
+    e2e("alex flies a circle around steve, filming him the whole way") {
         val target = server {
             waitForPlayer("steve")
             waitForPlayer("alex")
@@ -65,22 +67,27 @@ val blocks = suite("blocks") {
             FAR_AWAY
         }
 
+        // Steve hangs above the block and stays put; alex starts one side of him, which is where
+        // the circle will begin and end.
+        teleport("steve", target.offset(0, 3, 0), flying = true)
+        teleport("alex", target.offset(-6, 3, 0), flying = true)
+        // No lookAt here on purpose: the orbit aims at steve on its very first tick, and asserting
+        // the aim beforehand races alex client copy of where steve just teleported to.
+
         // Everything inside is ordinary test DSL, and exactly it is what ends up in the file. The
         // recording is closed before this returns, so the next line could read the video back.
         record("alex", "circling.mp4", RecordingOptions(fps = 30)) {
-            teleport("alex", target.offset(-4, 3, -4), flying = true)
-            teleport("steve", target.offset(4, 3, 4), flying = true)
-            lookAt("alex", target)
+            // One full turn over ten seconds, driven a step per server tick. Alex keeps steve
+            // centred throughout, so the video is a slow pan around a stationary subject.
+            orbitPlayer("alex", around = "steve", overTicks = 200)
+        }
 
-            // Movement worth watching: a still frame cannot show whether the turn was smooth.
-            lookAt("alex", target.offset(0, 0, 6))
-            delay(2.seconds)
-            lookAt("alex", target.offset(6, 0, 0))
-            delay(2.seconds)
-
-            lookAtPlayer("alex", "steve")
-            client("alex") { chat("say cheese") }
-            delay(HOLD)
+        // The circle ended where it began, which is the check that it was a circle and not a drift.
+        server {
+            val alex = serverPlayers.first { it.name.string == "alex" }
+            val steve = serverPlayers.first { it.name.string == "steve" }
+            val apart = hypot(alex.x - steve.x, alex.z - steve.z)
+            assertThat("alex should have come back to the radius he set out at") { apart in 5.0..7.0 }
         }
     }
 

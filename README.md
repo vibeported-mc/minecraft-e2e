@@ -396,6 +396,46 @@ the client's log and the test carries on.
 Recordings are written as fragmented MP4, so a client the orchestrator terminates still leaves a
 playable file rather than one with no index.
 
+### Animating over ticks
+
+```kotlin
+server {
+    var remaining = 40
+    serverTickLoop {
+        nudgeSomething()
+        remaining-- > 0      // false ends the loop and returns
+    }
+}
+```
+
+The unit of animation on a node: the body computes what this tick should look like and says whether
+it wants another. It runs on the game thread and the wait between calls hands that thread back, so
+the game ticks normally while the loop runs. `maxTicks` is a guard rather than a schedule -- a body
+that never returns `false` would otherwise hang the run with nothing to show.
+
+Built on it, and the reason it exists:
+
+```kotlin
+record("alex", "circling.mp4") {
+    orbitPlayer("alex", around = "steve", overTicks = 200)
+}
+```
+
+Alex flies one full circle around steve over ten seconds, watching him the whole way. Every tick
+computes the point on the circle and the yaw and pitch to look at steve from *that* point -- aiming
+from where the eyes are about to be rather than where they are, because a camera that arrives a tick
+after the body it is attached to wobbles. Position and rotation go in one movement, with the velocity
+zeroed, so nothing the client thinks it is doing fights the path.
+
+The circle starts wherever the orbiting player already stands, so there is no jump into it, and it
+keeps whatever distance the two were already at unless told otherwise. Being server-driven, it is the
+same path on every machine however fast that client renders -- which is what makes one recording
+worth comparing against another.
+
+Motion is at tick rate, twenty new camera positions a second, interpolated by nothing: that is what
+server-driven means. Spread over enough ticks each step is too small to read as a step -- the default
+200 turns about 1.8 degrees a tick.
+
 ### Windows
 
 `mcE2E { clientWidth = 1280; clientHeight = 720 }` -- Minecraft opens at 854x480, which is too small
