@@ -6,6 +6,7 @@
   "client": [
     "ContainerScreenAccessor",
     "CursorRequestAccessor",
+    "GameRendererMixin",
     "GuiOverlayMixin",
     "InputConstantsMixin",
     "KeyboardHandlerInvoker",

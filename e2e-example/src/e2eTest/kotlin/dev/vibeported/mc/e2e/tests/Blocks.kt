@@ -19,6 +19,8 @@ import dev.vibeported.mc.e2e.dsl.makeScreenshot
 import dev.vibeported.mc.e2e.dsl.pixelsPerSecond
 import dev.vibeported.mc.e2e.dsl.playerInventory
 import dev.vibeported.mc.e2e.dsl.positionOf
+import dev.vibeported.mc.e2e.dsl.record
+import dev.vibeported.mc.e2e.dsl.RecordingOptions
 import dev.vibeported.mc.e2e.dsl.teleport
 import dev.vibeported.mc.e2e.dsl.timeoutSec
 import dev.vibeported.mc.e2e.dsl.ui
@@ -54,6 +56,33 @@ private const val RING_SIDE = 5
 private const val RING_LAST = RING_SIDE - 1
 
 val blocks = suite("blocks") {
+
+    e2e("one client is recorded while both players circle the block") {
+        val target = server {
+            waitForPlayer("steve")
+            waitForPlayer("alex")
+            build { at(FAR_AWAY) { minecraft.gold_block } }
+            FAR_AWAY
+        }
+
+        // Everything inside is ordinary test DSL, and exactly it is what ends up in the file. The
+        // recording is closed before this returns, so the next line could read the video back.
+        record("alex", "circling.mp4", RecordingOptions(fps = 30)) {
+            teleport("alex", target.offset(-4, 3, -4), flying = true)
+            teleport("steve", target.offset(4, 3, 4), flying = true)
+            lookAt("alex", target)
+
+            // Movement worth watching: a still frame cannot show whether the turn was smooth.
+            lookAt("alex", target.offset(0, 0, 6))
+            delay(2.seconds)
+            lookAt("alex", target.offset(6, 0, 0))
+            delay(2.seconds)
+
+            lookAtPlayer("alex", "steve")
+            client("alex") { chat("say cheese") }
+            delay(HOLD)
+        }
+    }
 
     e2e("two players fly to a block, watch it, then watch each other") {
         // The block comes back as a return value. It used to be a `shared` handle written on one
@@ -191,6 +220,7 @@ val blocks = suite("blocks") {
             }
         }
     }
+
 }
 
 /** Fails unless a corner still holds the mirrored shape it was built with. */

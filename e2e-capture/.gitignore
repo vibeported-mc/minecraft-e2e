@@ -1,0 +1,8 @@
+# Everything the container build produces lands here: build/natives (the DLLs)
+# and build/generated (the jextract bindings). Neither is checked in -- the
+# Dockerfile is the artifact.
+build/
+.gradle/
+*/build/
+*/.gradle/
+example/out.mp4

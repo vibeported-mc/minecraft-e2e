@@ -353,6 +353,49 @@ would be photographing a scene it had already changed.
 failure. A message saying a slot was empty is a puzzle; the same message beside a picture of the
 inventory usually is not.
 
+### Screen recording
+
+```kotlin
+e2e("two players fight") {
+    record("alex", "fight.mp4", RecordingOptions(fps = 30, codec = VideoCodec.H264)) {
+        client("alex") { press(Key.W) }
+        server { ... }
+    }
+}
+```
+
+The body is ordinary test DSL and exactly it is what ends up in
+`build/reports/e2e/recordings/alex/fight.mp4`. The recording stops before the block returns -- so the
+file is closed and complete by the next line -- and it stops even when the body throws, which is the
+run most worth having the video of. Recording is per client: name a second one in a second `record`
+to film both.
+
+`RecordingOptions` carries `fps`, `codec` (`H264`, `HEVC` or `AV1`, all NVENC), `frameBufferSize`,
+`quality` and `preset`. It crosses to the client as a block argument, like any other value a block
+is given.
+
+**The frame never reaches the CPU.** Minecraft's main render target is a `GL_RGBA8` texture, whose
+bytes are precisely what NVENC accepts as packed 32-bit RGB. Each recorded frame is flipped the right
+way up with one `glBlitFramebuffer` (OpenGL's origin is bottom left, video's is top left -- the same
+reason Minecraft's screenshot code flips, except this happens on the GPU), copied device to device
+into the encoder's own memory, and encoded there. No `glReadPixels`, no colour conversion, no read
+back.
+
+**The game is never made to wait for the encoder.** `fps` is the rate of the *recording*, not of the
+game: a frame is taken only when the recording's clock says one is due, so a client rendering at 300
+frames a second does not encode 300 of them. Rendering slower than that instead makes timestamps
+jump, so the player holds the previous frame and a nine second test yields nine seconds of video with
+the stall where it happened. Capture and encoding are on separate threads, and if the encoder still
+falls behind, frames are dropped and counted in the log rather than queued -- the recording is allowed
+to be worse, the test it is recording is not allowed to be slower.
+
+Needs an NVIDIA GPU on the machine running the tests, and the first build after `e2e-capture` joins
+the tree cross-compiles FFmpeg in Docker. Without a GPU the recording is refused with the reason in
+the client's log and the test carries on.
+
+Recordings are written as fragmented MP4, so a client the orchestrator terminates still leaves a
+playable file rather than one with no index.
+
 ### Windows
 
 `mcE2E { clientWidth = 1280; clientHeight = 720 }` -- Minecraft opens at 854x480, which is too small
@@ -446,6 +489,11 @@ every id alone. Renaming a suite or test *does* change its ids: the price of ids
 | `e2e-compiler-plugin` | The K2 plugin: FIR checkers and the IR transform |
 | `e2e-gradle-plugin` | An included build. Applies and configures everything, adds `runE2eTests` |
 | `e2e-example` | A consumer: the plugins block, the `mcE2E` block, and one suite |
+| `e2e-capture` | An included build. FFmpeg cross-built for Windows, its Panama bindings, and the recorder that feeds NVENC |
+
+`e2e-capture` is an included build rather than a module because it carries a Docker step: it
+cross-compiles FFmpeg and generates its own bindings, and a `gradlew build` here drives that as an
+ordinary task with ordinary up-to-date checks. It still builds on its own.
 
 `e2e-core` and `e2e-protocol` deliberately do not share a package. FancyModLoader builds a real
 module graph, and two jars cannot both export one package to it.

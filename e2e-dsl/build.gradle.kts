@@ -29,6 +29,10 @@ val e2eCompilerPlugin: Configuration by configurations.creating {
 dependencies {
     api(project(":e2e-core"))
     implementation(libs.kotlinforforge)
+    // Screen recording. e2e-capture is an included build (see settings.gradle.kts), so this
+    // substitutes to the project rather than resolving a published module. Its jar carries the
+    // FFmpeg DLLs inside it and unpacks them on first use.
+    implementation("dev.vibeported.capture:libav:0.1.0")
     e2eCompilerPlugin(project(":e2e-compiler-plugin"))
 }
 

@@ -25,6 +25,12 @@ dependencyResolutionManagement {
     }
 }
 
+// The capture stack -- FFmpeg cross-built for Windows, its Panama bindings and the
+// object-oriented layer over them -- is its own build with its own Docker step, so it
+// joins as an included build rather than as a subproject. Gradle substitutes the
+// dev.vibeported.capture:libav dependency for the project inside it.
+includeBuild("e2e-capture")
+
 rootProject.name = "minecraft-e2e"
 
 include(
