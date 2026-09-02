@@ -560,3 +560,13 @@ jars cannot both export one package to it.
   own projects.
 - **Debug instruments.** `UiLayer.DEBUG` exists and is drawn in the right place; nothing draws in it
   yet, and neither does anything identify which window is which.
+
+## Licence
+
+[MIT](LICENSE), for everything in this repository.
+
+One thing that is not this repository's to license: the `:capture` jar carries **FFmpeg shared
+libraries, which are LGPL-2.1**. They are built without `--enable-gpl` and without
+`--enable-nonfree`, linked dynamically and shipped as separate DLLs rather than statically bound, and
+the jar carries their licence texts and a manifest of exactly what was built beside them. Anything
+distributing a build that includes the recorder inherits those terms for that part.
