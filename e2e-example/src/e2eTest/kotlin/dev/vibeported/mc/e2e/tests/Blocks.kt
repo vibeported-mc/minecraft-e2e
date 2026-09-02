@@ -23,6 +23,7 @@ import dev.vibeported.mc.e2e.dsl.teleport
 import dev.vibeported.mc.e2e.dsl.timeoutSec
 import dev.vibeported.mc.e2e.dsl.ui
 import dev.vibeported.mc.e2e.dsl.waitForPlayer
+import dev.vibeported.mc.e2e.ServerScope
 import dev.vibeported.mc.e2e.server
 import dev.vibeported.mc.e2e.suite.suite
 import kotlinx.coroutines.coroutineScope
@@ -32,6 +33,8 @@ import net.minecraft.core.BlockPos
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.Items
 import net.minecraft.world.level.block.Blocks
+import net.minecraft.world.level.block.StairBlock
+import net.minecraft.world.level.block.state.properties.StairsShape
 import kotlin.time.Duration.Companion.seconds
 
 /** Far from spawn and high up, so nothing is there by accident and nothing holds a player up. */
@@ -42,6 +45,13 @@ private val HOLD = 5.seconds
 
 /** Slow on purpose: a drag that finishes in three frames is a drag nobody can check. */
 private val DRAG = pixelsPerSecond(150.0)
+
+/** Its own corner of the world, so the ring cannot touch anything the other tests placed. */
+private val RING = BlockPos(140, 200, 200)
+
+/** The ring is [RING_SIDE] blocks on a side, so its far edge is at this offset. */
+private const val RING_SIDE = 5
+private const val RING_LAST = RING_SIDE - 1
 
 val blocks = suite("blocks") {
 
@@ -121,6 +131,63 @@ val blocks = suite("blocks") {
         }
 
         objectAndSettleIt("steve", "alex")
+    }
+
+    e2e("a ring of stairs keeps the corners it was given, wrong way round and all") {
+        // Four straight edges facing outwards, and four corners deliberately mirrored: each corner
+        // is given the corner shape belonging to the *other* hand, so instead of closing the ring it
+        // turns away from both edges it should meet.
+        //
+        // That is the interesting part. A stair works out its own shape from its neighbours, so a
+        // block placed with updates on would be quietly straightened into the corner the game thinks
+        // it should be -- and the test would pass while testing nothing. `build` places with
+        // UPDATE_KNOWN_SHAPE for exactly this reason, and the assertions below are what pins that
+        // down: they fail if anything recomputed a shape behind our back.
+        server {
+            waitForPlayer("steve")
+
+            build(RING) {
+                fill(1..RING_LAST - 1, 0..0, 0..0) { minecraft.oak_stairs { facing = north } }
+                fill(1..RING_LAST - 1, 0..0, RING_LAST..RING_LAST) {
+                    minecraft.oak_stairs { facing = south }
+                }
+                fill(0..0, 0..0, 1..RING_LAST - 1) { minecraft.oak_stairs { facing = west } }
+                fill(RING_LAST..RING_LAST, 0..0, 1..RING_LAST - 1) {
+                    minecraft.oak_stairs { facing = east }
+                }
+
+                at(0, 0, 0) { minecraft.oak_stairs { facing = north; shape = outer_right } }
+                at(RING_LAST, 0, 0) { minecraft.oak_stairs { facing = north; shape = outer_left } }
+                at(0, 0, RING_LAST) { minecraft.oak_stairs { facing = south; shape = outer_left } }
+                at(RING_LAST, 0, RING_LAST) {
+                    minecraft.oak_stairs { facing = south; shape = outer_right }
+                }
+            }
+
+            log("placed a ${RING_SIDE}x$RING_SIDE stair ring at $RING with its corners mirrored")
+        }
+
+        // Read back on the server, which is the only opinion that settles it: a client draws what it
+        // was sent, so a corner that the server had already straightened would look correct there.
+        server {
+            assertCorner("north-west", RING, StairsShape.OUTER_RIGHT)
+            assertCorner("north-east", RING.offset(RING_LAST, 0, 0), StairsShape.OUTER_LEFT)
+            assertCorner("south-west", RING.offset(0, 0, RING_LAST), StairsShape.OUTER_LEFT)
+            assertCorner("south-east", RING.offset(RING_LAST, 0, RING_LAST), StairsShape.OUTER_RIGHT)
+
+            // And one edge, so a run where every shape came out `straight` cannot pass by accident.
+            val middleOfNorthEdge = RING.offset(RING_LAST / 2, 0, 0)
+            assertBlock("the middle of the north edge should be a straight stair", middleOfNorthEdge) {
+                it.getValue(StairBlock.SHAPE) == StairsShape.STRAIGHT
+            }
+        }
+    }
+}
+
+/** Fails unless a corner still holds the mirrored shape it was built with. */
+private suspend fun ServerScope.assertCorner(corner: String, pos: BlockPos, shape: StairsShape) {
+    assertBlock("the $corner corner should still be $shape", pos) {
+        it.getValue(StairBlock.SHAPE) == shape
     }
 }
 
