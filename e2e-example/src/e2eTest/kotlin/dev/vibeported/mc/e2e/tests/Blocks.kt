@@ -147,12 +147,12 @@ val blocks = suite("blocks") {
             waitForPlayer("steve")
 
             build(RING) {
-                fill(1..RING_LAST - 1, 0..0, 0..0) { minecraft.oak_stairs { facing = north } }
-                fill(1..RING_LAST - 1, 0..0, RING_LAST..RING_LAST) {
+                fill(1..<RING_LAST, 0..0, 0..0) { minecraft.oak_stairs { facing = north } }
+                fill(1..<RING_LAST, 0..0, RING_LAST..RING_LAST) {
                     minecraft.oak_stairs { facing = south }
                 }
-                fill(0..0, 0..0, 1..RING_LAST - 1) { minecraft.oak_stairs { facing = west } }
-                fill(RING_LAST..RING_LAST, 0..0, 1..RING_LAST - 1) {
+                fill(0..0, 0..0, 1..<RING_LAST) { minecraft.oak_stairs { facing = west } }
+                fill(RING_LAST..RING_LAST, 0..0, 1..<RING_LAST) {
                     minecraft.oak_stairs { facing = east }
                 }
 
@@ -166,6 +166,15 @@ val blocks = suite("blocks") {
 
             log("placed a ${RING_SIDE}x$RING_SIDE stair ring at $RING with its corners mirrored")
         }
+
+        // Somewhere the whole ring is in frame, held long enough for a person watching to see which
+        // way the corners point. Before the assertions on purpose: if one of them fails, the picture
+        // of what was actually built is the first thing worth having.
+        teleport("steve", RING.offset(RING_LAST / 2, 6, -6), flying = true)
+        lookAt("steve", RING.offset(RING_LAST / 2, 0, RING_LAST / 2))
+        delay(HOLD)
+
+        client("steve") { makeScreenshot("the stair ring, corners the wrong way round") }
 
         // Read back on the server, which is the only opinion that settles it: a client draws what it
         // was sent, so a corner that the server had already straightened would look correct there.
