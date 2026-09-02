@@ -85,6 +85,48 @@ the two runs and seeds their directories. `neoForge { }` is ModDevGradle's own e
 a wrapper, so anything the plugin has not thought to expose is still reachable, and nothing here has
 to be kept in step with ModDevGradle as it changes.
 
+## Diagnostics in the IDE
+
+The rules below are FIR checkers, so the compiler enforces them on every build. Getting them under
+the cursor as you type takes one step per IDE, because neither runs a compiler plugin it does not
+itself ship: the IDE analyses Kotlin with its own bundled compiler, and a plugin built against a
+different one could misbehave inside it. That is a real risk rather than a formality, so treat what
+follows as a convenience and the build as the source of truth.
+
+**IntelliJ IDEA.** Turn off the registry key that restricts analysis to bundled plugins:
+<kbd>Help</kbd> > <kbd>Find Action</kbd> > <kbd>Registry</kbd>, then clear
+`kotlin.k2.only.bundled.compiler.plugins.enabled`. Nothing else is needed.
+
+**VS Code**, with [Java and Kotlin by IntelliJ IDEA](https://marketplace.visualstudio.com/items?itemName=JetBrains.intellij-server).
+That extension hardcodes the same flag, so there is no setting to change (JetBrains issue
+IDEA-393372). `tools/lsp-fir-agent` is a small java agent that rewrites it; build it once and pass
+it to the language server:
+
+```sh
+./gradlew -p tools/lsp-fir-agent jar
+```
+
+```jsonc
+// .code-workspace, or .vscode/settings.json in a single-folder workspace
+"intellij.additionalJvmArgs": [
+    "-javaagent:/absolute/path/to/minecraft-e2e/tools/lsp-fir-agent/build/libs/lsp-fir-agent.jar"
+]
+```
+
+The agent announces itself on stderr, which lands in the language server's log; `-De2e.agent.disabled=true`
+turns it off again without removing the argument.
+
+Either way it may simply not work, and it may work and then stop working after an IDE update. If the
+editor is quiet, compile — a rule that fires in the build and not in the editor is this, not your code:
+
+```sh
+./gradlew compileE2eTestKotlin
+```
+
+This is also why the Gradle plugin puts the compiler plugin on the `main` compilation as well as on
+the suites: the VS Code server reads it only from `main`, and `main` holds no procedures, so it
+costs nothing.
+
 ## A test is a plan, not code
 
 A test body may contain **only** shared declarations, `server`/`client` calls, and `parallel { }`
@@ -294,7 +336,8 @@ split is enforced by the type system, not by convention:
 
 ## The rules the compiler enforces
 
-These are FIR checkers, so they appear under the cursor in the IDE as you type, not in a build log:
+These are FIR checkers. The compiler enforces them on every build; for them to appear under the
+cursor as you type, see [Diagnostics in the IDE](#diagnostics-in-the-ide).
 
 | Rule | Why |
 | --- | --- |

@@ -124,10 +124,23 @@ class E2eGradlePlugin : Plugin<Project> {
         // freeCompilerArgs. Both reach the compiler, but only this one is part of the model an IDE
         // imports: a raw argument is an opaque string it never parses into a plugin, so the
         // checkers never run in the editor and a rejected capture shows up only at build time.
-        val pluginClasspath =
-            "kotlinCompilerPluginClasspath" + suites.name.replaceFirstChar { it.uppercase() }
         val pluginDependency = project.configurations.getByName("e2eCompilerPlugin")
-        project.configurations.named(pluginClasspath).configure { it.extendsFrom(pluginDependency) }
+
+        // The suites, which is the compilation that actually needs it.
+        val suitesClasspath =
+            "kotlinCompilerPluginClasspath" + suites.name.replaceFirstChar { it.uppercase() }
+        project.configurations.named(suitesClasspath).configure { it.extendsFrom(pluginDependency) }
+
+        // And `main`, which needs it only so that an editor can see it. The VS Code language
+        // server imports `kotlinCompilerPluginClasspathMain` and no other variant, and models one
+        // module per Gradle project rather than one per source set -- so `main` is where it looks
+        // for the plugin that governs every source root, the suites included. Harmless in a build:
+        // `main` holds no procedures, so the plugin finds nothing to lift there.
+        if (suitesClasspath != MAIN_PLUGIN_CLASSPATH) {
+            project.configurations
+                .named(MAIN_PLUGIN_CLASSPATH)
+                .configure { it.extendsFrom(pluginDependency) }
+        }
 
         val compileSuites = project.tasks.named(suites.getCompileTaskName("kotlin"), KotlinCompile::class.java)
         compileSuites.configure { task ->
@@ -301,3 +314,6 @@ class E2eGradlePlugin : Plugin<Project> {
         const val LEVEL_NAME = "e2e"
     }
 }
+
+/** Kotlin's compiler-plugin classpath for the `main` compilation. @see E2eGradlePlugin */
+private const val MAIN_PLUGIN_CLASSPATH = "kotlinCompilerPluginClasspathMain"

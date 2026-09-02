@@ -21,6 +21,11 @@ internal class ProcedureIndexWriter(
     private val messages: MessageCollector,
 ) {
     fun write(plans: List<FilePlan>) {
+        // Nothing lifted, nothing to write, nothing to complain about. A compilation can carry the
+        // plugin without holding a single procedure -- `main` does, so that an IDE can see the
+        // checkers -- and warning about a missing output directory there would be noise.
+        if (plans.isEmpty()) return
+
         val root = indexDir?.let(::File) ?: run {
             messages.report(
                 CompilerMessageSeverity.WARNING,
