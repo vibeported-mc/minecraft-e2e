@@ -1,7 +1,7 @@
 pluginManagement {
     // The Gradle plugin is an included build so this very build can apply it by id, rather than
     // duplicating the Minecraft run wiring for the sake of dogfooding it.
-    includeBuild("e2e-gradle-plugin")
+    includeBuild("gradle-plugin")
 
     repositories {
         gradlePluginPortal()
@@ -25,20 +25,23 @@ dependencyResolutionManagement {
     }
 }
 
-// The capture stack -- FFmpeg cross-built for Windows, its Panama bindings and the
-// object-oriented layer over them -- is its own build with its own Docker step, so it
-// joins as an included build rather than as a subproject. Gradle substitutes the
-// dev.vibeported.capture:libav dependency for the project inside it.
-includeBuild("e2e-capture")
-
 rootProject.name = "minecraft-e2e"
 
 include(
-    ":e2e-core",
-    ":e2e-dsl",
-    ":e2e-suite",
-    ":e2e-orchestrator",
-    ":e2e-codegen",
-    ":e2e-example",
-    ":e2e-compiler-plugin",
+    ":core",
+    ":dsl",
+    ":suite",
+    ":orchestrator",
+    ":codegen",
+    ":example",
+    ":compiler-plugin",
+
+    // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
+    // the very headers it was built with, and the object-oriented layer over them. Ordinary
+    // subprojects -- the Docker step is a task like any other, with the same up-to-date
+    // checks. They build on 25 rather than the 21 the rest of the tree uses, because the FFM
+    // API only became final in 22; capture/build.gradle.kts sets that for itself.
+    ":capture:libav-gen",
+    ":capture:libav",
+    ":capture:example",
 )

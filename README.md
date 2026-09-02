@@ -1,56 +1,62 @@
 # minecraft-e2e
 
-End-to-end tests for NeoForge mods that run against a **real dedicated server and a real client**, in
+End-to-end tests for NeoForge mods that run against a **real dedicated server and real clients**, in
 separate processes, driven by an orchestrator.
 
 ```kotlin
 val blocks = suite("blocks") {
 
     e2e("two players fly to a block, watch it, then watch each other") {
-        val target = shared<BlockPos>()
-        val alexAt = shared<BlockPos>()
-
-        server {
+        // A block returns a value to the caller, so a fixture needs no shared state.
+        val target = server {
             waitForPlayer("steve")
             waitForPlayer("alex")
-            serverLevel.setBlockAndUpdate(FAR_AWAY, Blocks.GOLD_BLOCK.defaultBlockState())
-            target.set(FAR_AWAY)
+            build { at(FAR_AWAY) { minecraft.gold_block } }
+            FAR_AWAY
         }
 
-        parallel {
-            client("steve") {
-                val block = target.get()
-                teleport(block.offset(-3, 4, -3), flying = true)
-                assertBlock("steve should see the gold block", block, timeoutSec(10)) {
-                    it.block == Blocks.GOLD_BLOCK
-                }
-                lookAt(block)
-                delay(5.seconds)
+        // Both clients at once: ordinary structured concurrency, because a test body is
+        // ordinary code.
+        coroutineScope {
+            launch { watchTheBlock("steve", "alex", target, target.offset(-3, 4, -3)) }
+            launch { watchTheBlock("alex", "steve", target, target.offset(3, 4, 3)) }
+        }
 
-                alexAt.get()            // finishes the moment alex has landed
-                lookAtPlayer("alex")
+        server(target) { pos ->
+            assertBlock("the server should still have the block it placed", pos) {
+                it.block == Blocks.GOLD_BLOCK
             }
-
-            client("alex") { /* the mirror image */ }
         }
     }
 }
+
+private suspend fun watchTheBlock(who: String, other: String, block: BlockPos, from: BlockPos) {
+    teleport(who, from, flying = true)
+    client(who, block) { pos ->
+        assertBlock("$who should see the gold block", pos, timeoutSec(10)) {
+            it.block == Blocks.GOLD_BLOCK
+        }
+    }
+    lookAt(who, block)
+    delay(5.seconds)
+    lookAtPlayer(who, other)
+}
 ```
 
-That test passes today against Minecraft 26.2 / NeoForge 26.2.0.69, with two real client
-processes running the two halves of that `parallel` at once:
+That test passes today against Minecraft 26.2 / NeoForge 26.2.0.69, with two real client processes
+running the two halves of that `coroutineScope` at once:
 
 ```
 PASS blocks > two players fly to a block, watch it, then watch each other  (10450 ms)
-    PASS server        …/server[0]            (98 ms)
-    PASS client[steve] …/client[steve][0]  (10316 ms)
-    PASS client[alex]  …/client[alex][0]   (10343 ms)
     log:
       [server]        placed a gold block at BlockPos{x=100, y=200, z=200}
       [client[steve]] alex is at BlockPos{x=103, y=204, z=203}
       [client[alex]]  steve is at BlockPos{x=97, y=204, z=197}
 ```
 
+Tests can also **record themselves**: `record("alex", "fight.mp4") { ... }` films a client straight
+off the GPU through NVENC, without the frame ever reaching the CPU. See
+[Screen recording](#screen-recording).
 ## Setting it up
 
 The whole of a consuming build:
@@ -181,29 +187,25 @@ when the mod set or the NeoForge version changes.
 only if compiling the result starts to cost. Everything is the default, because a name that is never
 generated is a name a suite cannot write.
 
-## A test is a plan, not code
+## A test body is ordinary code
 
-A test body may contain **only** shared declarations, `server`/`client` calls, and `parallel { }`
-groups of those. Anything else is a compile error, because there is nowhere for it to run:
+It used to be a plan -- a declarative list of steps the compiler read and threw away. It is not any
+more. A body is Kotlin, and the blocks inside it are what get lifted:
 
 ```kotlin
-e2e("...") {
-    val target = shared<BlockPos>()    // allowed
-    server { … }                       // allowed
-    client("steve") { … }              // allowed
-    parallel { client("steve") { … }; client("alex") { … } }   // allowed
-    println("hello")                   // compile error
+e2e("two players fly to a block, watch it, then watch each other") {
+    val target = server { ... }              // a block, lifted, returns a value
+
+    coroutineScope {                          // ordinary structured concurrency
+        launch { watchTheBlock("steve", "alex", target) }
+        launch { watchTheBlock("alex", "steve", target) }
+    }
 }
 ```
 
-Steps run one after another, which is what makes a test readable. `parallel { }` is the one way to
-give that up, so a reader can tell at a glance which parts of a test overlap — and it is what lets
-two clients look at each other, since neither is worth looking at until both have arrived.
-
-The compiler reads the blocks out as an ordered list of steps and throws the body away. So the
-orchestrator has nothing to execute — it walks the list, telling each node which block to run. That
-is what makes "the orchestrator needs no Minecraft on its classpath" true by construction, and it is
-why a crashed server cannot take the thing coordinating the test down with it.
+There is no `parallel { }`, because there is nothing left for it to do: two clients that should act
+at once are two `launch`es. A block written inside a loop, a helper function or another lambda is
+fine -- see [Stable ids](#stable-ids) for why that costs nothing.
 
 ## How a block gets to the other process
 
@@ -212,30 +214,34 @@ ordinary Kotlin lambda cannot go there: it is a closure over locals that do not 
 side.
 
 So a K2 compiler plugin lifts every block body out of its closure into a generated dispatch table
-keyed by a stable structural id, and rewrites `shared` reads and writes into RPC:
+keyed by a stable id, and rewrites the call site into a dispatch:
 
 ```kotlin
 // at the call site:
-scope.dispatch(BlockId("…/server[0]"), NodeId(SERVER, 0))
+invokeProcedure(id = "...BlocksKt.blocks/server[0]", target = NodeId(SERVER), args = listOf(...), ...)
 
 // and, in a generated object beside the file facade:
-internal object E2eBlocks_BlocksKt : E2eBlockTable {
-    override suspend fun invoke(id: String, scope: BlockScope): Any? {
-        if (id == "…/server[0]") return b0_server_0_(scope)
-        …
+internal object ServerProcedures_BlocksKt : ProcedureTable {
+    override suspend fun invoke(id: String, scope: Any, args: List<Any?>): Any? {
+        if (id == "...BlocksKt.blocks/server[0]") return b0_server_0_(scope)
+        ...
     }
 }
 ```
 
-The lambda is never serialized; only its id travels. The body is *moved* rather than copied — the
-function the frontend already built for the lambda is re-parented into the table — so every symbol
-inside it stays valid, and it stops being a closure because it is no longer nested in one.
+The lambda is never serialized; only its id and its arguments travel. The body is *moved* rather than
+copied -- the function the frontend already built for the lambda is re-parented into the table -- so
+every symbol inside it stays valid, and it stops being a closure because it is no longer nested in
+one.
 
+There are two tables per file, a server one and a client one. A dedicated server is dist-cleaned, so
+client classes are not on its classpath at all, and one table naming both would be a class it could
+not verify.
 ## Blocks run on the game thread
 
 A block body is dispatched onto its process's event loop, so **every Minecraft call in it is safe
-with no wrapper**. Awaiting inside one — a `shared` value, a nested `client { }`, a `delay` — releases
-the loop, so the game keeps ticking and the block resumes back on it.
+with no wrapper**. Awaiting inside one -- a nested `client { }`, an assertion that waits, a
+`delay` -- releases the loop, so the game keeps ticking and the block resumes back on it.
 
 Only block bodies go on the loop. Sockets, the RPC peer and the log pump stay on IO and Default, so a
 slow tick cannot delay the machinery that is measuring it.
@@ -389,7 +395,7 @@ the stall where it happened. Capture and encoding are on separate threads, and i
 falls behind, frames are dropped and counted in the log rather than queued -- the recording is allowed
 to be worse, the test it is recording is not allowed to be slower.
 
-Needs an NVIDIA GPU on the machine running the tests, and the first build after `e2e-capture` joins
+Needs an NVIDIA GPU on the machine running the tests, and the first build after `:capture` joins
 the tree cross-compiles FFmpeg in Docker. Without a GPU the recording is refused with the reason in
 the client's log and the test carries on.
 
@@ -473,70 +479,79 @@ split is enforced by the type system, not by convention:
 
 ## The rules the compiler enforces
 
-These are FIR checkers. The compiler enforces them on every build; for them to appear under the
-cursor as you type, see [Diagnostics in the IDE](#diagnostics-in-the-ide).
+Two, both FIR checkers, so they appear under the cursor as you type once the IDE is set up -- see
+[Diagnostics in the IDE](#diagnostics-in-the-ide).
 
 | Rule | Why |
 | --- | --- |
-| A test body holds only shared declarations and blocks | The body is never executed, so anything else would silently not run |
-| A block may not reference an enclosing local unless it is `shared` | That local does not exist in the process the block runs in |
-| A shared value may not be read inside a lambda that is not inlined | Reading one is a suspending call, impossible in a lambda compiled to its own function |
-| A block body must be a lambda written in place | A function reference has no stable identity for the table |
-| Suite and test names must be compile-time constants | They form part of the stable id |
-| `shared<T>()` only as `var x by shared<T>()` inside an `e2e` block | One declaring scope, therefore one id |
-| No `server`/`client` inside another lambda | Its ordinal would depend on how many times that lambda ran |
-| No duplicate test or shared names in one scope | The two would collide on one id |
-| A client name must be a string literal | The run starts the clients a suite names, and reads that list out of the compiled code |
+| A block may not capture an enclosing local | That local does not exist in the process the block runs in. Pass it as an argument -- every block takes up to ten -- or declare it inside |
+| A block body must be a lambda written in place | A function reference, or a lambda held in a variable, has no stable identity to give the dispatch table |
 
 Anything top-level or static is fine to reference: every node loads the same jars.
 
-## Shared values
+That is the whole list. Blocks in loops, in `forEach`, in helper functions and inside other lambdas
+are all fine, because an id describes *where a block was written* rather than how many times it runs.
 
-`shared` is a property delegate, so `target` is honestly typed `BlockPos`. The delegate never runs —
-the plugin replaces every read and write with a suspending call to the orchestrator, which holds the
-only authoritative copy.
+## Values that cross
+
+Arguments in, a return value out:
+
+```kotlin
+val target = server {                       // returns a BlockPos to the caller
+    build { at(FAR_AWAY) { minecraft.gold_block } }
+    FAR_AWAY
+}
+
+client("alex", target) { pos ->             // and takes it as an argument
+    lookAt(pos)
+}
+```
 
 Minecraft types have no `@Serializable`, but they do have Mojang codecs. `McValueCodec` encodes them
 with the game's own `Codec` into NBT, writes that to bytes, and carries the bytes as a string inside
 the same kotlinx-serialized envelope as everything else. `BlockPos`, `BlockState` and `ItemStack` are
-registered; anything else falls through to plain kotlinx serialization, which keeps `shared<Int>()`
-working.
+registered; anything else falls through to plain kotlinx serialization.
 
 ## Stable ids
 
 ```
-…BlocksKt:blocks                                          suite
-…BlocksKt:blocks/a block moved                            test
-…BlocksKt:blocks/a block moved/server[0]                  a step
-…BlocksKt:blocks/a block moved/server[0]/client[alex][0]  a client block raised by the server
-…BlocksKt:blocks/a block moved#target                     a shared value
+dev.vibeported.mc.e2e.tests.BlocksKt.blocks/server[0]          a block
+dev.vibeported.mc.e2e.tests.BlocksKt.blocks/client[alex][0]    a client block
+dev.vibeported.mc.e2e.tests.BlocksKt.blocks/client[*][0]       one whose client is not a literal
 ```
 
-Ordinals count per client name, so adding a client to a test cannot renumber another one's blocks,
-and a report says who ran a block without anyone having to look it up.
+The facade class, then the declaration the call sits in, then a per-role ordinal in source order.
+Lexical, not structural: the id says where a block was *written*.
 
-Ordinals come from declaration order, so reformatting a file or editing an unrelated test leaves
-every id alone. Renaming a suite or test *does* change its ids: the price of ids a person can read.
-`server(id = "…")` pins one when that matters.
+One process compiles the call site and another looks it up, so an id has to survive a rebuild on
+another machine. Ordinals count per role and per client name, so adding a client cannot renumber
+another one's blocks. Reformatting a file or editing an unrelated test leaves every id alone; moving
+a block to a different declaration changes its id. `server(id = "...")` pins one when that matters.
 
 ## Modules
 
+Each has a README of its own.
+
 | Module | What it is |
 | --- | --- |
-| `e2e-protocol` | The wire: ids, index, envelopes, transport, RPC. No Minecraft, because the orchestrator has none |
-| `e2e-core` | The framework mod: the DSL, the Minecraft-typed scopes, codecs, node runner |
-| `e2e-orchestrator` | The process that launches the games, relays between them, and reports |
-| `e2e-compiler-plugin` | The K2 plugin: FIR checkers and the IR transform |
-| `e2e-gradle-plugin` | An included build. Applies and configures everything, adds `runE2eTests` |
-| `e2e-example` | A consumer: the plugins block, the `mcE2E` block, and one suite |
-| `e2e-capture` | An included build. FFmpeg cross-built for Windows, its Panama bindings, and the recorder that feeds NVENC |
+| [`:core`](core/README.md) | The framework mod: the calls, the Minecraft-typed scopes, the transport, the node runner |
+| [`:dsl`](dsl/README.md) | The verbs -- teleport, click, assert, screenshot, record -- built out of the same calls a suite uses |
+| [`:suite`](suite/README.md) | A driver: what a test is, how long it may take, what a report looks like |
+| [`:orchestrator`](orchestrator/README.md) | Launches the games, relays between them. No Minecraft on its classpath |
+| [`:compiler-plugin`](compiler-plugin/README.md) | The K2 plugin: two FIR checkers and the IR transform that lifts blocks |
+| [`:codegen`](codegen/README.md) | A Kotlin name for every block the game loads, generated by starting it |
+| [`:gradle-plugin`](gradle-plugin/README.md) | An included build. Applies and configures everything, adds `runE2eTests` |
+| [`:capture`](capture/README.md) | FFmpeg cross-built for Windows, its Panama bindings, and the recorder that feeds NVENC |
+| [`:example`](example/README.md) | A consumer: a plugins block, an `mcE2E` block, and one suite |
 
-`e2e-capture` is an included build rather than a module because it carries a Docker step: it
-cross-compiles FFmpeg and generates its own bindings, and a `gradlew build` here drives that as an
-ordinary task with ordinary up-to-date checks. It still builds on its own.
+`:capture` carries a Docker step -- it cross-compiles FFmpeg and generates its own bindings -- but
+that is a task like any other, with the same inputs and up-to-date checks, so `gradlew build` drives
+it along with everything else. Its three modules build on Java 25 rather than the 21 the rest of the
+tree uses: the FFM API the bindings are made of only became final in 22, and the root
+`subprojects { }` block would otherwise hand them 21.
 
-`e2e-core` and `e2e-protocol` deliberately do not share a package. FancyModLoader builds a real
-module graph, and two jars cannot both export one package to it.
+`:core` keeps its `protocol` package to itself. FancyModLoader builds a real module graph, and two
+jars cannot both export one package to it.
 
 ## Not built yet
 
@@ -545,4 +560,3 @@ module graph, and two jars cannot both export one package to it.
   own projects.
 - **Debug instruments.** `UiLayer.DEBUG` exists and is drawn in the right place; nothing draws in it
   yet, and neither does anything identify which window is which.
-- **Block return values.** `dispatch` returns nothing; blocks communicate only through `shared`.
