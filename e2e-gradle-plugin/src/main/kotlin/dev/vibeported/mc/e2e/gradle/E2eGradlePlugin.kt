@@ -1,6 +1,8 @@
 package dev.vibeported.mc.e2e.gradle
 
 import net.neoforged.moddevgradle.dsl.NeoForgeExtension
+import net.neoforged.moddevgradle.internal.Branding
+import net.neoforged.moddevgradle.internal.IdeIntegration
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.FileCollection
@@ -9,7 +11,9 @@ import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.language.jvm.tasks.ProcessResources
+import org.gradle.api.tasks.TaskProvider
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.io.File
 
@@ -70,6 +74,12 @@ class E2eGradlePlugin : Plugin<Project> {
             it.isCanBeResolved = true
         }
         val orchestrator = project.configurations.create("e2eOrchestrator") {
+            it.isCanBeConsumed = false
+            it.isCanBeResolved = true
+        }
+        // Declared always, wired only when `blockDsl { }` asks for it: a build that never opts in
+        // never puts the generator on a classpath, and a build that does has somewhere to say so.
+        project.configurations.create("e2eCodegen") {
             it.isCanBeConsumed = false
             it.isCanBeResolved = true
         }
@@ -248,6 +258,93 @@ class E2eGradlePlugin : Plugin<Project> {
         project.tasks.named("runE2eOrchestrator").configure { task ->
             task.dependsOn(harvest, seedRunDirs)
         }
+
+        if (settings.blockDsl.enabled.getOrElse(false)) {
+            generateBlockDsl(project, settings, modId, neoForge, compileSuites)
+        }
+    }
+
+    /**
+     * A Kotlin name for every block the game loads, and a builder for the properties each one has.
+     *
+     * Reached by starting the game, because nothing else knows: a modded block registers itself, and
+     * a property's legal values can come from a predicate, so neither the jar nor the source says
+     * what a build may write. The generator boots FancyModLoader, reads the registry and writes
+     * Kotlin; this wires that into the build.
+     *
+     * Only called when a build opted in, since booting the game is far too much to charge every
+     * build for a feature it may not use.
+     */
+    private fun generateBlockDsl(
+        project: Project,
+        settings: McE2eExtension,
+        suitesModId: String,
+        neoForge: NeoForgeExtension,
+        compileSuites: TaskProvider<KotlinCompile>,
+    ) {
+        val blocksDir = project.layout.buildDirectory.dir("generated/e2e/blocks")
+        val namespaces = settings.blockDsl.namespaces.getOrElse(emptyList())
+
+        // A source set of its own, holding no source, purely to give the run a classpath.
+        //
+        // It cannot be the suites': the generated names are compiled into those, so a run that used
+        // them would have to be built before it could produce what building them needs. A separate
+        // classpath breaks that circle, and has the better side of also keeping the generator out of
+        // the server and client runs, where it has no business being loaded.
+        val generatorSources = project.extensions
+            .getByType(SourceSetContainer::class.java)
+            .maybeCreate("blockDslGenerator")
+        neoForge.addModdingDependenciesTo(generatorSources)
+        project.configurations
+            .named(generatorSources.runtimeOnlyConfigurationName)
+            .configure { it.extendsFrom(project.configurations.getByName("e2eCodegen")) }
+
+        neoForge.runs.create("e2eCodegen") { run ->
+            // A server run for the dist the loader must prepare, and then our main class instead of
+            // Minecraft's: the registry is filled, no world is ever created.
+            run.server()
+            run.sourceSet.set(generatorSources)
+            // Every mod except the suites. ModDevGradle puts a declared mod's classes on every
+            // run, and the suites are a mod -- so loading them here would mean building the names
+            // this run exists to write before it could run. Everything else stays: the mod under
+            // test is exactly what a build wants named, and it is only the suites that circle back.
+            run.loadedMods.set(
+                project.provider { neoForge.mods.filter { it.name != suitesModId }.toSet() }
+            )
+            run.gameDirectory.set(project.layout.projectDirectory.dir("run/e2eCodegen"))
+            run.mainClass.set("dev.vibeported.mc.e2e.codegen.launcher.CodegenEntrypoint")
+            run.jvmArgument("-De2e.blockdsl.out=${blocksDir.get().asFile.absolutePath}")
+            run.jvmArgument("-De2e.blockdsl.namespaces=${namespaces.joinToString(",")}")
+        }
+
+        val run = project.tasks.named("runE2eCodegen")
+        run.configure { task ->
+            // Up-to-dateness is what keeps this off the critical path of an ordinary build: the
+            // answer changes when the mods change and at no other time, so that is what it watches.
+            task.outputs.dir(blocksDir)
+            task.inputs.property("namespaces", namespaces)
+            task.inputs.files(
+                project.configurations.getByName(generatorSources.runtimeClasspathConfigurationName)
+            )
+        }
+
+        val generate = project.tasks.register("generateBlockDsl") { task ->
+            task.group = "build"
+            task.description = "Writes a Kotlin name for every block the loaded mods register."
+            task.dependsOn(run)
+        }
+
+        // Kotlin, not resources: this is source the suites compile against, and the plugin has only
+        // ever generated resources before.
+        project.extensions.getByType(KotlinJvmProjectExtension::class.java)
+            .sourceSets.getByName(settings.sourceSetName.get())
+            .kotlin.srcDir(blocksDir)
+
+        compileSuites.configure { it.dependsOn(generate) }
+
+        // So the names are there when the project opens, rather than after someone remembers to
+        // build. ModDevGradle uses this same hook to prepare Minecraft during a sync.
+        IdeIntegration.of(project, Branding.MDG).runTaskOnProjectSync(generate)
     }
 
     /**

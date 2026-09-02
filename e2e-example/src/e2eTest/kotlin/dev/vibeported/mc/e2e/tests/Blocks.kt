@@ -1,5 +1,6 @@
 package dev.vibeported.mc.e2e.tests
 
+import dev.vibeported.mc.e2e.blocks.minecraft
 import dev.vibeported.mc.e2e.client
 import dev.vibeported.mc.e2e.dsl.InventorySlot
 import dev.vibeported.mc.e2e.dsl.MouseButton
@@ -8,6 +9,7 @@ import dev.vibeported.mc.e2e.dsl.assertPlayerDead
 import dev.vibeported.mc.e2e.dsl.assertThat
 import dev.vibeported.mc.e2e.dsl.attack
 import dev.vibeported.mc.e2e.dsl.breakBlock
+import dev.vibeported.mc.e2e.dsl.build
 import dev.vibeported.mc.e2e.dsl.chat
 import dev.vibeported.mc.e2e.dsl.giveItem
 import dev.vibeported.mc.e2e.dsl.isAlive
@@ -51,7 +53,7 @@ val blocks = suite("blocks") {
             waitForPlayer("steve")
             waitForPlayer("alex")
 
-            serverLevel.setBlockAndUpdate(FAR_AWAY, Blocks.GOLD_BLOCK.defaultBlockState())
+            build { at(FAR_AWAY) { minecraft.gold_block } }
             log("placed a gold block at $FAR_AWAY")
             FAR_AWAY
         }
@@ -74,7 +76,7 @@ val blocks = suite("blocks") {
         val target = server {
             waitForPlayer("steve")
             waitForPlayer("alex")
-            serverLevel.setBlockAndUpdate(FAR_AWAY, Blocks.GOLD_BLOCK.defaultBlockState())
+            build { at(FAR_AWAY) { minecraft.gold_block } }
 
             // Opposite corners of the inventory on purpose: the two windows are then visibly doing
             // different work, and neither client can pass on the other one's state.

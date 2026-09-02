@@ -32,6 +32,7 @@ include(
     ":e2e-dsl",
     ":e2e-suite",
     ":e2e-orchestrator",
+    ":e2e-codegen",
     ":e2e-example",
     ":e2e-compiler-plugin",
 )

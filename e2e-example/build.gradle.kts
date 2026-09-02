@@ -12,6 +12,12 @@ mcE2E {
     }
     modId = "example"
     orchestratorMain = "dev.vibeported.mc.e2e.tests.MainKt"
+
+    // Names every block the loaded mods register, so a fixture is written in Kotlin the compiler
+    // checks rather than in a string nobody checks. Costs one game boot when the mod set changes.
+    blockDsl {
+        enable()
+    }
 }
 
 // A published consumer gets these from Maven. This repo points them at its own projects so the
@@ -22,4 +28,5 @@ dependencies {
     "e2eTestImplementation"(project(":e2e-suite"))
     e2eCompilerPlugin(project(":e2e-compiler-plugin"))
     e2eOrchestrator(project(":e2e-orchestrator"))
+    e2eCodegen(project(":e2e-codegen"))
 }

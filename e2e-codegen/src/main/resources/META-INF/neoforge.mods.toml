@@ -1,0 +1,9 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "e2e_codegen"
+version = "0.1.0"
+displayName = "Minecraft E2E codegen"
+description = '''Reads the block registry once the game has loaded, and writes the Kotlin that names it.'''

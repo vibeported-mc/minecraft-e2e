@@ -127,6 +127,60 @@ This is also why the Gradle plugin puts the compiler plugin on the `main` compil
 the suites: the VS Code server reads it only from `main`, and `main` holds no procedures, so it
 costs nothing.
 
+## Building a world
+
+A block is an id plus properties whose legal values differ per block, and spelling that as a string
+means a typo is discovered as a test failing somewhere else. Turn the block DSL on and the whole of
+it is checked by the compiler:
+
+```kotlin
+mcE2E {
+    blockDsl { enable() }
+}
+```
+
+```kotlin
+server {
+    build(FAR_AWAY) {
+        at(0, 0, 0) { minecraft.hopper { facing = down } }
+        at(0, 1, 0) { minecraft.bamboo_mosaic_stairs { facing = north; half = top } }
+        at(1, 0, 0) { minecraft.stone }
+        fill(-1..1, -1..-1, -1..1) { minecraft.stone }
+    }
+}
+```
+
+`down`, `north` and `top` are members of that block's own builder, so completion offers exactly the
+values that property accepts and nothing else. A hopper's `facing` has no `up`; a stair's has no
+`up` or `down` either; `minecraft.stone { }` takes no properties at all. Each of those is a compile
+error at the character, not a block quietly missing from the world.
+
+`build` takes an origin and the coordinates inside are offsets from it, so a fixture moves by
+changing one line. Left out, the origin is the world origin and the coordinates read as absolute.
+
+Blocks are placed with `UPDATE_KNOWN_SHAPE`, so a neighbour cannot recompute the properties the test
+just named -- without it a stair asked for `shape = straight` becomes a corner because of what was
+placed beside it.
+
+Nothing here suspends. `build` is an ordinary extension on `ServerScope` that runs inside a
+`server { }` you already had, so a hundred-block fixture costs one visit to the game thread rather
+than a hundred ticks.
+
+### What generating it costs
+
+Off unless `blockDsl { enable() }` says otherwise, and off costs nothing: no task, no source
+directory, no game.
+
+On, a build starts FancyModLoader and loads every mod to read the block registry -- because which
+blocks exist, and what each property accepts, are answers only a running game has. It runs when the
+IDE syncs, so the names are there when the project opens, and again from `compileE2eTest` for a
+headless build. **The first sync after enabling it is noticeably slower**; after that it reruns only
+when the mod set or the NeoForge version changes.
+
+`namespaces = listOf("minecraft", "mymod")` narrows what is generated, which is worth reaching for
+only if compiling the result starts to cost. Everything is the default, because a name that is never
+generated is a name a suite cannot write.
+
 ## A test is a plan, not code
 
 A test body may contain **only** shared declarations, `server`/`client` calls, and `parallel { }`
@@ -404,4 +458,3 @@ module graph, and two jars cannot both export one package to it.
 - **Debug instruments.** `UiLayer.DEBUG` exists and is drawn in the right place; nothing draws in it
   yet, and neither does anything identify which window is which.
 - **Block return values.** `dispatch` returns nothing; blocks communicate only through `shared`.
-- **World fixtures.** The server run is seeded with a flat world and an accepted EULA, nothing more.
