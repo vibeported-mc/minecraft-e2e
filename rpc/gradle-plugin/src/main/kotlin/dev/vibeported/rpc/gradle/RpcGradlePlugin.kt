@@ -85,10 +85,13 @@ public class RpcGradlePlugin : Plugin<Project> {
                     val options = mutableListOf(
                         "-P", "plugin:$PLUGIN_ID:manifestDir=${manifestDir.get().asFile.absolutePath}",
                     )
-                    val contextual = settings.contextual.get()
-                    if (contextual.isNotEmpty()) {
+                    // One `-P` per type, never a comma-joined list. A comma inside a `-P` value is
+                    // how the Kotlin CLI separates one plugin option from the next, so a joined
+                    // list arrives as a second option with no `plugin:` prefix -- and the compiler
+                    // says only "Wrong plugin option format", naming neither the option nor us.
+                    settings.contextual.get().forEach { type ->
                         options += "-P"
-                        options += "plugin:$PLUGIN_ID:contextual=${contextual.joinToString(",")}"
+                        options += "plugin:$PLUGIN_ID:contextual=$type"
                     }
                     options
                 }

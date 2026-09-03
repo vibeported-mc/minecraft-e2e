@@ -22,9 +22,12 @@ public class RpcCommandLineProcessor : CommandLineProcessor {
         when (option.optionName) {
             OPTION_MANIFEST_DIR.optionName -> configuration.put(KEY_MANIFEST_DIR, value)
             OPTION_ENABLED.optionName -> configuration.put(KEY_ENABLED, value.toBooleanStrict())
+            // Accumulated, because the option is passed once per type -- see the Gradle plugin
+            // for why it cannot be one comma-joined value.
             OPTION_CONTEXTUAL.optionName -> configuration.put(
                 KEY_CONTEXTUAL,
-                value.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
+                configuration.get(KEY_CONTEXTUAL).orEmpty() +
+                    value.split(',').map(String::trim).filter(String::isNotEmpty),
             )
 
             else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
@@ -64,9 +67,12 @@ public class RpcCommandLineProcessor : CommandLineProcessor {
          */
         public val OPTION_CONTEXTUAL: CliOption = CliOption(
             optionName = "contextual",
-            valueDescription = "<fqName,fqName,...>",
-            description = "Types whose serializer is resolved from the wire format's SerializersModule.",
+            valueDescription = "<fqName>",
+            description = "A type whose serializer is resolved from the wire format's SerializersModule.",
             required = false,
+            // Passed once per type. A comma inside a `-P` value is how the Kotlin CLI separates one
+            // plugin option from the next, so a list cannot arrive as a single value.
+            allowMultipleOccurrences = true,
         )
     }
 }

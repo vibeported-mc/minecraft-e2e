@@ -116,6 +116,30 @@ class WireTypesTest {
     }
 
     @Test
+    fun `more than one promised type is allowed, which a comma-joined list would not be`() {
+        // The option is passed once per type. A comma inside a `-P` value is how the Kotlin CLI
+        // separates one plugin option from the next, so a joined list arrives as a second option
+        // with no `plugin:` prefix -- and the compiler says only "Wrong plugin option format",
+        // naming neither the option nor the plugin. One type never showed it; two do.
+        val compilation = RpcCompilation(workingDir).apply {
+            contextual = listOf("java.io.File", "java.net.URI")
+        }
+        val result = compilation.compile(
+            "Sample.kt" to (
+                preamble + "\n\n" + """
+                import java.io.File
+                import java.net.URI
+
+                suspend fun both(who: String, file: File, uri: URI): File =
+                    rpcCall(node(who), file, uri) { f, _ -> f }
+                """.trimIndent()
+                )
+        )
+
+        assertTrue(result.succeeded, result.messages)
+    }
+
+    @Test
     fun `the same type is still refused when the build did not promise one`() {
         // The other half: naming a type in the option is what allows it, so a typo in that list is
         // a compile error rather than a serializer that quietly is not there.
