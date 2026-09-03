@@ -16,6 +16,6 @@ public class RpcFirExtensionRegistrar : FirExtensionRegistrar() {
 public class RpcCheckersExtension(session: FirSession) : FirAdditionalCheckersExtension(session) {
 
     override val expressionCheckers: ExpressionCheckers = object : ExpressionCheckers() {
-        override val functionCallCheckers: Set<FirExpressionChecker<FirFunctionCall>> = setOf(RoleProbe)
+        override val functionCallCheckers: Set<FirExpressionChecker<FirFunctionCall>> = setOf(RpcCallChecker, RoleProbe)
     }
 }
