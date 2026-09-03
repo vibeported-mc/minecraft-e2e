@@ -1,10 +1,31 @@
 # rpc
 
-Not an RPC framework.
+Run code on another machine, written where it is used.
 
-RPC starts from an interface: declare a service, generate stubs, call a method someone else
-implemented. This starts from a *program* -- one file, read top to bottom, in which some expressions
-are marked to run somewhere else.
+This is **not an RPC framework** -- there is no service to declare and no interface to keep in sync.
+[Here is what it is instead](NOT_RPC.md), and what the model is called.
+
+```kotlin
+suspend fun doWork(): Int {
+    // Runs on node a. Written here.
+    val fromA = rpcCall(node("a")) { 2 }
+
+    // Runs on node b. Written here -- and note `fromA` is *passed*, not captured: this body runs in
+    // another process, where a local of this function does not exist. The compiler rejects the
+    // version that closes over it, rather than leaving it to fail at run time.
+    val fromB = rpcCall(node("b"), fromA) { a -> a * 3 }
+
+    // Runs here.
+    return fromA + fromB
+}
+```
+
+One function, three machines, read top to bottom. That file compiles and runs --
+[`OneFileTest.kt`](example/src/test/kotlin/dev/vibeported/rpc/example/OneFileTest.kt) is where it
+lives, and it asserts the 8.
+
+A body can also say *which kind of node* it needs, which is what makes a dist-cleaned game server
+survivable:
 
 ```kotlin
 suspend fun anywhere(target: String): String = rpcCall(node(target)) { Alpha.callA() }
@@ -13,36 +34,8 @@ suspend fun onlyOnB(target: String): String =
     rpcCall(node(target)) @RpcRole("B") { Alpha.callA() + "/" + Beta.callB() }
 ```
 
-Two nodes, two machines, no interface between them and no service declared anywhere. The literature
-calls this **multitier** (or *tierless*) programming, and the compile step **tier splitting**. Nearest
-kin: [ScalaLoci](https://scala-loci.github.io/), Eliom, Links, Ur/Web.
-
-The rest of this document is what that costs. A body may not capture anything around it, and every
-value it needs must serialize -- both enforced by the compiler rather than discovered in a log.
-
-## What it is called
-
-The name matters because it is the difference between "some bespoke thing" and a design with forty
-years of prior art and known trade-offs.
-
-| Term | From | Here |
-|---|---|---|
-| multitier / tierless programming | Links, Hop, Ur/Web, Eliom, ScalaLoci | one file, parts placed on different nodes |
-| tier splitting | Eliom | what the K2 plugin does: bodies become per-role tables |
-| placement | ScalaLoci's `on[Client]` | `@RpcRole("B")`, plus the `RpcScope` subtype a body sees |
-| remote evaluation (REV) | Fuggetta, Picco & Vigna, *Understanding Code Mobility*, 1998 | the caller supplies the code; the node supplies what could not travel |
-| static closure | GHC `StaticPointers`; Cloud Haskell's `Closure` | `LiftedBody` -- a name and its serializers. Code never crosses the wire |
-| spore | Miller, Haller & Odersky | the no-capture rule `RpcCallChecker` enforces |
-
-That taxonomy is worth the paragraph. It has four corners, and **RPC is the one opposite this**: in
-client-server the code already lives at the far end and a call names it; in remote evaluation the
-caller supplies the code and the far node supplies the resources that could not be sent. A game
-client's `minecraft.player` exists on one machine only, and there is no bringing it here -- so the
-body goes there instead.
-
-**If you already know React Server Actions**, this is the same shape: `"use server"` inside a client
-file, the bundler lifts the function out, and the call site keeps a reference carrying an id. Even
-the failure modes rhyme.
+The rest of this document is what all that costs. A body may not capture anything around it, and
+every value it needs must serialize -- both enforced by the compiler rather than discovered in a log.
 
 ## What the compiler does with it
 
@@ -53,7 +46,7 @@ and result. Moved rather than copied -- the function the frontend already built 
 every symbol inside it stays valid, and it stops being a closure because it is no longer nested in
 one.
 
-One table per (file, role). The two calls at the top of this page compile to:
+One table per (file, role). The `anywhere` and `onlyOnB` pair above compiles to:
 
 | class | references |
 |---|---|
