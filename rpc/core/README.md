@@ -3,38 +3,36 @@
 Identity, targeting, scopes, the calls, the tables and the dispatcher. Everything a node needs to run
 a body, and nothing about how bytes reach another machine.
 
-The split with `:rpc:transport` is one interface wide -- `Outbound.call(target, procedure, args)` --
-and it is what lets a node that never leaves its process depend on no networking at all. A cluster of
-one is `Outbound.Isolated`, whose every method says why rather than what.
+The split with `:rpc:transport` is one interface wide -- send these bytes to that node and bring back
+the answer -- and it is what lets a node that never leaves its process depend on no networking at
+all. A cluster of one gets an implementation whose every method says why rather than what.
 
-## What is in it
-
-| | |
-|---|---|
-| `Identity.kt` | `NodeId`, `Role`, `NodeInfo`. Value classes, and `Role` is open -- a closed enum of `SERVER`/`CLIENT` is the mistake this framework exists to undo |
-| `RpcTarget.kt` | `Exactly` a node, or `Where` a predicate matches. Named `RpcTarget` because `Target` shadows `kotlin.annotation.Target` |
-| `Services.kt` | The node-local registry. A body's receiver is resolved from it on the node that runs the body; an unknown type lists what the node *does* have |
-| `RpcScope.kt` | What a body sees where it lands, and the interface a layer subtypes to offer its own |
-| `RpcBody.kt`, `Calls.kt` | The body shapes at each arity, and `rpcCall` / `rpcCallIn` / `forEachRpcCall` / `forEachRpcCallCatching` over them. **Generated** -- edit `tools/rpc-overloads.py` |
-| `Annotations.kt`, `LiftedBody.kt` | `@RpcRole`, `@RpcLift`, and what a lambda becomes: an id, a role and its serializers |
-| `ProcedureTable.kt` | The interface the generated tables implement: `procedures()`, `invoke`, `decodeArgs`, `encodeResult` |
-| `Manifest.kt`, `TableRegistry.kt` | Reading every `META-INF/rpc/procedures.json` on the classpath, and resolving only the tables this node's roles allow |
-| `Dispatch.kt` | What a call becomes: local or remote, with the role narrowing the target set on the way |
-| `Wire.kt` | `WireFormat`. CBOR by default, because arguments are `ByteArray` and JSON would base64 them |
-| `RpcNode.kt` | The node itself, and `ProcedureServer` -- the inbound mirror of `Dispatch` |
-| `Membership.kt`, `Outbound.kt` | The two things core needs from a transport, as interfaces it does not implement |
-
-## Three decisions that are load-bearing
+## Six decisions that are load-bearing
 
 **Every call here is an ordinary function.** Nothing in this module is privileged by the compiler
-plugin except the `@RpcLift` annotation on a parameter. `forEachRpcCall` is a dozen lines over
-`dispatchEach` and could have been written outside this module -- which is the test of whether the
-design is any good, because a layer that needs a call of its own must be able to write one.
+plugin except one annotation on a parameter. A fan-out is a dozen lines over the dispatcher and could
+have been written outside this module -- which is the test of whether the design is any good, because
+a layer that needs a call of its own must be able to write one without touching the plugin.
+
+**A role is a string, not an enum.** The framework this replaces had a closed
+`ORCHESTRATOR`/`SERVER`/`CLIENT` enum, and that single decision is what welded it to one game. Roles
+are open here, and a node holds a set of them.
 
 **Both halves of serialization live on the table, not on the node.** The bytes arriving at a node
-carry no type information, and only the generated code knows what they were. So `ProcedureTable`
-carries `decodeArgs` and `encodeResult`, and `ProcedureServer` hands them the bytes without opinions.
+carry no type information, and only the generated code knows what they were. So a procedure table
+decodes its own arguments and encodes its own result, and the server half hands it bytes without
+opinions. Anything else would need a reflective codec lookup at run time, which is the failure this
+framework was built to move to compile time.
 
-**A local call never serializes.** `Dispatch` compares the target to this node's id first and hands
-the real objects over. That is what makes it affordable to build a whole gameplay vocabulary out of
-these calls -- most of them are not going anywhere.
+**A local call never serializes.** The dispatcher compares the target to this node's id first and
+hands the real objects over. That is what makes it affordable to build a whole gameplay vocabulary
+out of these calls -- most of them are not going anywhere, and the ones that are pay alone.
+
+**CBOR is the default wire format.** Arguments are already `ByteArray` by the time they reach an
+envelope, and JSON would base64 every one of them. JSON stays available for when a human has to read
+a frame.
+
+**The call overloads are generated, not written.** Bodies may not capture, so everything a body needs
+arrives as an argument, so every call exists at every arity to five -- twenty-four near-identical
+functions, which is exactly where a typo hides. `tools/rpc-overloads.py` emits them and `--check`
+fails if anyone edits the output instead of the generator.
