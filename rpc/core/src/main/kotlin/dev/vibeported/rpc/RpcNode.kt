@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package dev.vibeported.rpc
 
 import kotlin.coroutines.AbstractCoroutineContextElement

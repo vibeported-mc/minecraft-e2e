@@ -31,6 +31,15 @@ internal object RoleProbe : FirExpressionChecker<FirFunctionCall>(MppCheckerKind
         val onFunction = body?.anonymousFunction?.annotations?.let { EntryPoints.roleIn(it) }
         val onFile = context.containingFileSymbol?.annotations?.let { EntryPoints.roleIn(it) }
 
+        // Recorded for the backend, which cannot see the annotation at all. Keyed by the call
+        // rather than the lambda: an annotated lambda's source begins at the annotation in FIR and
+        // at the brace in IR, so only the call's own position is spelled the same in both.
+        val file = context.containingFileSymbol?.fir?.sourceFile?.path
+        val offset = expression.source?.startOffset
+        if (file != null && offset != null) {
+            dev.vibeported.rpc.plugin.RoleIndex.record(file, offset, onExpression ?: onFunction ?: onFile)
+        }
+
         Seen.calls += buildString {
             append(callee.name.asString())
             append(" expr=").append(onExpression ?: "-")
