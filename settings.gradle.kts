@@ -42,6 +42,7 @@ include(
     ":rpc:core",
     ":rpc:transport",
     ":rpc:testkit",
+    ":rpc:compiler-plugin",
 
     // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
     // the very headers it was built with, and the object-oriented layer over them. Ordinary
