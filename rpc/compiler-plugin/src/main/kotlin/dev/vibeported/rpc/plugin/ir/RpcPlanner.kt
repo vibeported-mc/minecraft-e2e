@@ -10,7 +10,10 @@ import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.declarations.IrParameterKind
+import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
@@ -63,25 +66,38 @@ internal class RpcPlanner(
             override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
 
             override fun visitCall(expression: IrCall) {
-                if (!expression.symbol.owner.hasAnnotation(ENTRY_POINT)) {
-                    expression.acceptChildrenVoid(this)
-                    return
+                liftablePositions(expression).forEach { index ->
+                    planCall(plan, enclosing, ordinal++, expression, index)
                 }
-                planCall(plan, enclosing, ordinal++, expression)
-                // Still descend: a body may hold entry-point calls of its own, and each needs an id.
+                // Still descend: a body may hold calls of its own, and each needs an id.
                 expression.acceptChildrenVoid(this)
             }
         })
     }
 
-    private fun planCall(plan: FilePlan, enclosing: String, ordinal: Int, call: IrCall) {
-        val lambda = call.trailingLambda() ?: return
+    /**
+     * Argument positions holding a lambda written in place, at a parameter marked `@RpcLift`.
+     *
+     * A position whose argument is anything else -- most usually a body being forwarded from an
+     * enclosing `@RpcLift` parameter -- is left alone. That single rule is what lets a chain of
+     * functions pass a body along without any of them knowing about the others.
+     */
+    private fun liftablePositions(call: IrCall): List<Int> {
+        val parameters = call.symbol.owner.parameters
+        return (0 until call.arguments.size).filter { index ->
+            val parameter = parameters.getOrNull(index) ?: return@filter false
+            parameter.hasAnnotation(LIFT) && call.arguments[index].asLambda() != null
+        }
+    }
 
-        // rpcCall<A1..An, R>: everything but the last type argument is an argument type. A body
-        // whose types did not resolve is not one this plugin can encode, and the frontend has
-        // already refused it.
-        val typeArguments = call.typeArguments
-        if (typeArguments.isEmpty() || typeArguments.any { it == null }) return
+    private fun planCall(plan: FilePlan, enclosing: String, ordinal: Int, call: IrCall, index: Int) {
+        val lambda = call.arguments[index]?.asLambda()?.function ?: return
+
+        // Read off the body itself rather than the call's type arguments: the body knows what it
+        // takes and what it gives back, and a forwarding chain would have obscured both.
+        val arguments = lambda.parameters
+            .filter { it.kind == IrParameterKind.Regular }
+            .map { it.type }
 
         plan.procedures += ProcedurePlan(
             id = "${plan.facade}.$enclosing/$ordinal",
@@ -91,21 +107,19 @@ internal class RpcPlanner(
                 offset = call.startOffset,
             ),
             call = call,
-            lambda = lambda.function,
-            argumentTypes = typeArguments.dropLast(1).map { it!! },
-            resultType = typeArguments.last()!!,
+            argumentIndex = index,
+            lambda = lambda,
+            argumentTypes = arguments,
+            resultType = lambda.returnType,
         )
     }
 
-    /**
-     * The lambda a body was written as.
-     *
-     * The last function-typed argument, which is what a trailing lambda binds to. Anything else has
-     * already been refused by the frontend, so its absence here means only that this call was not
-     * written the way an entry point requires.
-     */
-    private fun IrCall.trailingLambda(): IrFunctionExpression? =
-        (0 until arguments.size).mapNotNull { arguments[it] as? IrFunctionExpression }.lastOrNull()
+    /** A lambda literal, whether or not the frontend wrapped it in a SAM conversion. */
+    private fun IrExpression?.asLambda(): IrFunctionExpression? = when (this) {
+        is IrFunctionExpression -> this
+        is IrTypeOperatorCall -> argument as? IrFunctionExpression
+        else -> null
+    }
 
     /** `Sample.kt` becomes `SampleKt`, the name the JVM already knows the file's top level by. */
     private fun facadeName(): String {
@@ -117,6 +131,6 @@ internal class RpcPlanner(
     }
 
     private companion object {
-        private val ENTRY_POINT = FqName("dev.vibeported.rpc.RpcEntryPoint")
+        private val LIFT = FqName("dev.vibeported.rpc.RpcLift")
     }
 }

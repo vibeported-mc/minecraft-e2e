@@ -17,6 +17,7 @@ import org.jetbrains.kotlin.fir.references.toResolvedVariableSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirValueParameterSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirVariableSymbol
+import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
 
 /**
@@ -33,21 +34,36 @@ internal class RpcCallChecker(
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
     override fun check(expression: FirFunctionCall) {
-        val callee = EntryPoints.calleeOf(expression) ?: return
-        val body = EntryPoints.bodyArgument(expression, callee) ?: return
-
-        if (body !is FirAnonymousFunctionExpression) {
-            reporter.reportOn(body.source, RpcDiagnostics.BODY_NOT_LITERAL)
-            return
+        // Running a body by hand. Checked at the callee rather than the receiver, because there
+        // are several ways to reach one -- `with(body) { scope.run() }` puts it in an implicit
+        // receiver -- and none of them is ever right: a table invokes the lifted function directly,
+        // so nothing legitimate calls `RpcBodyN.run` at all.
+        if (EntryPoints.isBodyInvocation(expression)) {
+            reporter.reportOn(expression.source, RpcDiagnostics.BODY_INVOKED_LOCALLY)
         }
 
+        EntryPoints.liftedArguments(expression).forEach { body ->
+            val lambda = EntryPoints.asLambda(body)
+            when {
+                lambda != null -> lift(expression, lambda)
+
+                // A body being passed along, which is exactly how a chain of calls is meant to work.
+                EntryPoints.isForwardedBody(body) -> Unit
+
+                else -> reporter.reportOn(body.source, RpcDiagnostics.BODY_NOT_LITERAL)
+            }
+        }
+    }
+
+    context(context: CheckerContext, reporter: DiagnosticReporter)
+    private fun lift(call: FirFunctionCall, body: FirAnonymousFunctionExpression) {
         // Written down for the backend, which cannot see the annotation: an expression target forces
         // SOURCE retention, so the role is gone by the time a body is lifted into a table. Keyed by
         // the call rather than the lambda -- an annotated lambda begins at the annotation here and
         // at the brace there, so only the call site is spelled the same in both.
         val containingFile = context.containingFileSymbol?.fir
         val path = containingFile?.sourceFile?.path
-        val offset = expression.source?.startOffset
+        val offset = call.source?.startOffset
         if (containingFile != null && path != null && offset != null) {
             roles.record(
                 packageName = containingFile.packageDirective.packageFqName.asString(),
@@ -58,6 +74,42 @@ internal class RpcCallChecker(
         }
 
         checkCaptures(body.anonymousFunction)
+        checkSerializable(body.anonymousFunction)
+    }
+
+    /**
+     * Rejects an argument or a result nothing can encode.
+     *
+     * Read off the lambda rather than the call's type arguments, so that the message lands on the
+     * declaration that named the type. This is the check the old runtime codec lookup could not
+     * make: there, a body returning a `java.io.File` compiled, ran, and failed halfway through a
+     * test with nothing pointing back to the signature.
+     */
+    context(context: CheckerContext, reporter: DiagnosticReporter)
+    private fun checkSerializable(lambda: FirAnonymousFunction) {
+        lambda.valueParameters.forEach { parameter ->
+            val type = parameter.returnTypeRef.coneType
+            Serializability.refuse(type, context.session)?.let { why ->
+                reporter.reportOn(
+                    parameter.source ?: lambda.source,
+                    RpcDiagnostics.UNSERIALIZABLE_TYPE,
+                    "argument '${parameter.name.asString()}'",
+                    Serializability.render(type),
+                    why,
+                )
+            }
+        }
+
+        val result = lambda.returnTypeRef.coneType
+        Serializability.refuse(result, context.session)?.let { why ->
+            reporter.reportOn(
+                lambda.source,
+                RpcDiagnostics.UNSERIALIZABLE_TYPE,
+                "result",
+                Serializability.render(result),
+                why,
+            )
+        }
     }
 
     /**

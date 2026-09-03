@@ -2,11 +2,13 @@ package dev.vibeported.rpc.plugin.fir
 
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory1
+import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory3
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactoryToRendererMap
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticsContainer
 import org.jetbrains.kotlin.diagnostics.SourceElementPositioningStrategies
 import org.jetbrains.kotlin.diagnostics.error0
 import org.jetbrains.kotlin.diagnostics.error1
+import org.jetbrains.kotlin.diagnostics.error3
 import org.jetbrains.kotlin.diagnostics.rendering.BaseDiagnosticRendererFactory
 import org.jetbrains.kotlin.psi.KtElement
 
@@ -26,6 +28,13 @@ public object RpcDiagnostics : KtDiagnosticsContainer() {
 
     public val BODY_NOT_LITERAL: KtDiagnosticFactory0 by error0<KtElement>()
 
+    /** Running a body here, when the whole point of it is to run somewhere else. */
+    public val BODY_INVOKED_LOCALLY: KtDiagnosticFactory0 by error0<KtElement>()
+
+    /** An argument or result nothing can encode. Reported on the lambda that declared the type. */
+    public val UNSERIALIZABLE_TYPE: KtDiagnosticFactory3<String, String, String> by
+        error3<KtElement, String, String, String>(SourceElementPositioningStrategies.DEFAULT)
+
     override fun getRendererFactory(): BaseDiagnosticRendererFactory = RpcErrorMessages
 }
 
@@ -40,8 +49,23 @@ public object RpcErrorMessages : BaseDiagnosticRendererFactory() {
         )
         map.put(
             RpcDiagnostics.BODY_NOT_LITERAL,
-            "A procedure body must be a lambda written in place. A function reference, or a lambda " +
-                "held in a variable, has no body to lift and no stable identity to record.",
+            "A procedure body must be a lambda written here, or one handed to this function in a " +
+                "parameter marked @RpcLift. Anything else was never lifted, and would fail at the " +
+                "far end of the chain with no clue which link dropped it.",
+        )
+        map.put(
+            RpcDiagnostics.BODY_INVOKED_LOCALLY,
+            "A procedure body cannot be run here. It was lifted out of this file at compile time, " +
+                "and what is left in this parameter is a handle naming it -- pass it to a call, " +
+                "which is the only thing that can reach the node it belongs to.",
+        )
+        map.put(
+            RpcDiagnostics.UNSERIALIZABLE_TYPE,
+            "A procedure {0} cannot be ''{1}'', because {2}. It has to cross a wire, and " +
+                "kotlinx.serialization is what carries it.",
+            null,
+            null,
+            null,
         )
     }
 }

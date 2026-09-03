@@ -33,7 +33,6 @@ import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.expressions.IrCall
-import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.impl.IrClassReferenceImpl
@@ -48,8 +47,6 @@ import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.types.starProjectedType
 import org.jetbrains.kotlin.ir.types.typeWith
 import org.jetbrains.kotlin.ir.util.constructors
-import org.jetbrains.kotlin.ir.util.kotlinFqName
-import org.jetbrains.kotlin.ir.util.parentAsClass
 import org.jetbrains.kotlin.ir.util.functions
 import org.jetbrains.kotlin.ir.util.patchDeclarationParents
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
@@ -105,61 +102,40 @@ internal class RpcTransformer(
     }
 
     /**
-     * Replaces each planned call with a call to the dispatcher.
+     * Replaces each lifted lambda with the handle standing for it.
      *
-     * The target expression is carried over untouched, so a node named by a computed value works
-     * exactly as a literal one does. Everything else the dispatcher needs -- the id, the role, the
-     * serializers -- is known only here, which is why the call has to be rebuilt rather than
-     * adjusted.
+     * Only the argument changes; the call itself is left exactly as written. That is the whole
+     * difference from dispatching here: `rpcCall` and everything like it are ordinary functions
+     * that receive a body and decide what to do with it, so a new one can be written by anybody
+     * without the plugin learning its name.
      */
     private fun rewriteCallSites(plan: FilePlan) {
-        val planned = plan.procedures.associateBy { it.call }
+        val planned = plan.procedures.groupBy { it.call }
 
         plan.file.transformChildrenVoid(object : IrElementTransformerVoid() {
             override fun visitCall(expression: IrCall): IrExpression {
-                val procedure = planned[expression] ?: return super.visitCall(expression)
-                return dispatcherCall(procedure)
+                planned[expression]?.forEach { procedure ->
+                    expression.arguments[procedure.argumentIndex] = handleFor(procedure)
+                }
+                return super.visitCall(expression)
             }
         })
     }
 
-    private fun dispatcherCall(procedure: ProcedurePlan): IrExpression {
+    private fun handleFor(procedure: ProcedurePlan): IrExpression {
         val builder = DeclarationIrBuilder(context, procedure.call.symbol)
-        val kind = dispatchKindOf(procedure.call)
-        val dispatcher = symbols.dispatchers[kind]
-            ?: error("rpc: unknown dispatch kind `$kind`")
-
-        // Everything the call site passed, minus the body: the first is the target, the rest are the
-        // body's arguments in the order it declared them.
-        val passed = (0 until procedure.call.arguments.size).mapNotNull { procedure.call.arguments[it] }
-        val target = passed.first()
-        // The body itself is gone from the call: it lives in the table now.
-        val values = passed.drop(1).filterNot { it is IrFunctionExpression }
-
         return with(builder) {
-            irCall(dispatcher).apply {
-                typeArguments[0] = procedure.resultType
-                arguments[0] = target
-                arguments[1] = irString(procedure.id)
-                arguments[2] = procedure.role?.let { irString(it) } ?: irNull()
-                arguments[3] = listOfValues(builder, context.irBuiltIns.anyNType, values)
-                arguments[4] = listOfValues(
+            irCallConstructor(symbols.liftedBodyConstructor, emptyList()).apply {
+                arguments[0] = irString(procedure.id)
+                arguments[1] = procedure.role?.let { irString(it) } ?: irNull()
+                arguments[2] = listOfValues(
                     builder,
                     symbols.kSerializer.starProjectedType,
                     procedure.argumentTypes.map { serializerFor(builder, it) },
                 )
-                arguments[5] = serializerFor(builder, procedure.resultType)
+                arguments[3] = serializerFor(builder, procedure.resultType)
             }
         }
-    }
-
-    /** What the entry point said it stands for, defaulting to a single node. */
-    private fun dispatchKindOf(call: IrCall): String {
-        val annotation = call.symbol.owner.annotations
-            .firstOrNull { it.symbol.owner.parentAsClass.kotlinFqName.asString() == ENTRY_POINT }
-            ?: return "ONE"
-        val argument = annotation.arguments.firstOrNull() as? IrGetEnumValue ?: return "ONE"
-        return argument.symbol.owner.name.asString()
     }
 
     // -- the table object ----------------------------------------------------------------------
@@ -475,6 +451,5 @@ internal class RpcTransformer(
     }
 
     private companion object {
-        const val ENTRY_POINT = "dev.vibeported.rpc.RpcEntryPoint"
     }
 }

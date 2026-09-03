@@ -99,7 +99,7 @@ class CaptureTest {
         )
 
         assertFalse(result.succeeded, "a reference must not be accepted as a body")
-        assertTrue("lambda written in place" in result.messages, result.messages)
+        assertTrue("must be a lambda written here" in result.messages, result.messages)
     }
 
     private fun compile(body: String) =

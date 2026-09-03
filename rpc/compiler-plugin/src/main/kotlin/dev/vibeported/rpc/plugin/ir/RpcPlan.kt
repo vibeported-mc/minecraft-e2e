@@ -16,6 +16,8 @@ internal class ProcedurePlan(
     val id: String,
     val role: String?,
     val call: IrCall,
+    /** Which argument of [call] held the body, so the transformer can put the handle back there. */
+    val argumentIndex: Int,
     val lambda: IrSimpleFunction,
     /** Declared argument types, in order. Empty for a body that takes none. */
     val argumentTypes: List<IrType>,
