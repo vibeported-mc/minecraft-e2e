@@ -1,0 +1,26 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "mcdriver"
+version = "0.1.0"
+displayName = "Minecraft driver"
+description = '''Puts an RPC node in a running game and exposes methods for driving it. Tools only -- it knows nothing about tests.'''
+
+[[mixins]]
+config = "mcdriver.mixins.json"
+
+[[dependencies.mcdriver]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.2,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.mcdriver]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.2,)"
+ordering = "NONE"
+side = "BOTH"

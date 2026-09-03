@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.vibeported.mc.driver.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ContainerScreenAccessor",
+    "CursorRequestAccessor",
+    "GameRendererMixin",
+    "GuiOverlayMixin",
+    "InputConstantsMixin",
+    "KeyboardHandlerInvoker",
+    "KeyboardHandlerMixin",
+    "MinecraftMixin",
+    "MouseHandlerInvoker",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

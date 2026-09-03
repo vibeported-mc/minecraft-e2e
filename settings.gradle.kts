@@ -36,6 +36,10 @@ rootProject.name = "minecraft-e2e"
 
 include(
     ":minecraft",
+
+    // The driver: one mod that puts an RPC node in a game and exposes methods for driving it.
+    // Tools only -- it knows nothing about tests, reports or logging.
+    ":driver",
     ":dsl",
     ":suite",
     ":orchestrator",
