@@ -5,6 +5,7 @@ import dev.vibeported.rpc.PluginGenerated
 import dev.vibeported.rpc.ProcedureTable
 import dev.vibeported.rpc.RpcTarget
 import dev.vibeported.rpc.Services
+import dev.vibeported.rpc.TableRegistry
 import dev.vibeported.rpc.WireFormat
 import dev.vibeported.rpc.dispatchEach
 import dev.vibeported.rpc.dispatchEachCatching
@@ -43,7 +44,7 @@ class FanOutTest {
         val cluster = RpcCluster(backgroundScope)
         val caller = cluster.join("caller", roles = setOf("driver"))
         listOf("one", "two", "three").forEach { name ->
-            cluster.join(name, roles = setOf("worker"), tables = listOf(ReportTable()), services = labelled(name))
+            cluster.join(name, roles = setOf("worker"), tables = TableRegistry.of(listOf(ReportTable())), services = labelled(name))
         }
         cluster.awaitEveryoneSeesEveryone()
 
@@ -115,9 +116,9 @@ class FanOutTest {
     private suspend fun clusterWithOneBadNode(scope: kotlinx.coroutines.CoroutineScope) =
         RpcCluster(scope).let { cluster ->
             val caller = cluster.join("caller", roles = setOf("driver"))
-            cluster.join("one", setOf("worker"), listOf(ReportTable()), labelled("one"))
-            cluster.join("two", setOf("worker"), listOf(ReportTable(unwell = true)), labelled("two"))
-            cluster.join("three", setOf("worker"), listOf(ReportTable()), labelled("three"))
+            cluster.join("one", setOf("worker"), TableRegistry.of(listOf(ReportTable())), labelled("one"))
+            cluster.join("two", setOf("worker"), TableRegistry.of(listOf(ReportTable(unwell = true))), labelled("two"))
+            cluster.join("three", setOf("worker"), TableRegistry.of(listOf(ReportTable())), labelled("three"))
             caller to cluster
         }
 

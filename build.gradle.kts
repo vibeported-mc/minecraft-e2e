@@ -51,3 +51,59 @@ subprojects {
         "testRuntimeOnly"(junitLauncher)
     }
 }
+
+// The standing proof that the RPC framework is free of the game.
+//
+// Stated as a task rather than left to eye and discipline, because the failure mode is silent: one
+// `import net.minecraft....` reached for out of convenience, and a framework meant to run anywhere
+// quietly needs Minecraft on the classpath to compile. Checking the resolved classpaths catches it
+// whether it arrives as a direct dependency or through somebody else's.
+//
+// Registered in each module rather than in the root, so nothing resolves another project's
+// configurations: doing that from here is what Gradle means by resolution without an exclusive
+// lock, and it is refused outright under the configuration cache.
+subprojects {
+    if (!path.startsWith(":rpc:")) return@subprojects
+
+    val classpaths = configurations
+        .matching { it.isCanBeResolved && it.name.endsWith("CompileClasspath") }
+        .map { configuration ->
+            // The name, lifted out before the lambda. Capturing `configuration` itself would put a
+            // Configuration inside a task action, which the configuration cache cannot write -- and
+            // it says so naming the type rather than the line, so it is worth not doing.
+            val where = configuration.name
+            configuration.incoming.artifacts.resolvedArtifacts.map { artifacts ->
+                artifacts
+                    .map { it.id.componentIdentifier.displayName }
+                    .filter { "net.minecraft" in it || "net.neoforged" in it }
+                    .map { "$where -> $it" }
+            }
+        }
+
+    // Folded into a single provider, because a task action may hold providers but not a collection
+    // of them: the configuration cache serializes what an action captured, and a map of providers
+    // is not something it can write.
+    val found = classpaths.fold(provider { emptyList<String>() }) { all, next ->
+        all.zip(next) { a, b -> a + b }
+    }
+
+    // Read out here: inside the task block `path` is the task's own, which would name
+    // `:rpc:testkit:checkNoGame` where the reader wants the module.
+    val module = path
+
+    val check = tasks.register("checkNoGame") {
+        group = "verification"
+        description = "Fails if this module can resolve a Minecraft or NeoForge artifact."
+        doLast {
+            val offending = found.get()
+            require(offending.isEmpty()) {
+                offending.joinToString(
+                    prefix = "$module must not be able to resolve the game, and does: ",
+                    separator = "; ",
+                )
+            }
+        }
+    }
+
+    tasks.named("check") { dependsOn(check) }
+}

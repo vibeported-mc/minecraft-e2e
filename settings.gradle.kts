@@ -3,6 +3,13 @@ pluginManagement {
     // duplicating the Minecraft run wiring for the sake of dogfooding it.
     includeBuild("gradle-plugin")
 
+    // And the RPC one, for the same reason: a plugin cannot be applied by the build that declares
+    // it. Unlike its neighbour it names nothing but the Kotlin Gradle plugin, so it cannot repeat
+    // the second-ModDevGradle-copy collision that broke IDE import.
+    // Renamed, because Gradle takes an included build's path from its directory name and there is
+    // already a `gradle-plugin` above.
+    includeBuild("rpc/gradle-plugin") { name = "rpc-gradle-plugin" }
+
     repositories {
         gradlePluginPortal()
         mavenCentral()
@@ -43,6 +50,7 @@ include(
     ":rpc:transport",
     ":rpc:testkit",
     ":rpc:compiler-plugin",
+    ":rpc:example",
 
     // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
     // the very headers it was built with, and the object-oriented layer over them. Ordinary

@@ -33,11 +33,18 @@ public class RpcCluster(private val scope: CoroutineScope) {
     private val fabric = InMemoryFabric()
     private val joined = LinkedHashMap<NodeId, RpcNode>()
 
-    /** Adds a node, announces it, and returns it ready to call and be called. */
+    /**
+     * Adds a node, announces it, and returns it ready to call and be called.
+     *
+     * [tables] is a registry rather than a list because that is what a node outside a test holds:
+     * one it built by reading the manifests on its own classpath and resolving only what its roles
+     * permit. A cluster that assembled the registry itself would be testing a shape nothing else
+     * uses, and would quietly hide the step where a role decides what a node can load.
+     */
     public suspend fun join(
         id: String,
         roles: Set<String> = emptySet(),
-        tables: List<ProcedureTable> = emptyList(),
+        tables: TableRegistry = TableRegistry.of(emptyList()),
         services: Services = Services(),
     ): RpcNode {
         val nodeId = NodeId(id)
@@ -47,7 +54,7 @@ public class RpcCluster(private val scope: CoroutineScope) {
 
         val node = RpcNode(
             info = NodeInfo(nodeId, roles.map(::Role).toSet()),
-            tables = TableRegistry.of(tables, roles.map(::Role).toSet()),
+            tables = tables,
             membership = membership,
             services = services,
             outbound = peer,

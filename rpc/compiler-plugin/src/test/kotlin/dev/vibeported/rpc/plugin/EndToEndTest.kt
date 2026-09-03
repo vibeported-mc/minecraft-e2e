@@ -24,6 +24,7 @@ class EndToEndTest {
         val result = RpcCompilation(workingDir).compile(
             "Suite.kt" to """
                 import dev.vibeported.rpc.ProcedureTable
+                import dev.vibeported.rpc.TableRegistry
                 import dev.vibeported.rpc.node
                 import dev.vibeported.rpc.rpcCall
                 import dev.vibeported.rpc.testkit.RpcCluster
@@ -40,8 +41,8 @@ class EndToEndTest {
                     fun run(table: ProcedureTable): String = runBlocking {
                         val scope = CoroutineScope(Job())
                         val cluster = RpcCluster(scope)
-                        val here = cluster.join("here", tables = listOf(table))
-                        cluster.join("there", tables = listOf(table))
+                        val here = cluster.join("here", tables = TableRegistry.of(listOf(table)))
+                        cluster.join("there", tables = TableRegistry.of(listOf(table)))
                         cluster.awaitEveryoneSeesEveryone()
 
                         val answer = withContext(here) { greet("there", "world") }
