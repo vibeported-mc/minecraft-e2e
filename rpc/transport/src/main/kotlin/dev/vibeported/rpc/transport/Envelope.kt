@@ -17,6 +17,14 @@ public sealed interface Envelope {
 }
 
 /**
+ * Where a node addresses the hub itself rather than a peer.
+ *
+ * Not a node: nothing runs procedures here, and no call is ever routed to it. It exists so that
+ * announcing yourself and asking the cluster a question use the same envelope as everything else.
+ */
+public val HUB: NodeId = NodeId("\$hub")
+
+/**
  * The first frame a node sends, naming itself.
  *
  * A hub accepts a connection before it can know who dialled in, so identity has to arrive in band.

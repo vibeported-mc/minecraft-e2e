@@ -91,8 +91,4 @@ public class InMemoryFabric {
         }
     }
 
-    public companion object {
-        /** Where a `Hello` goes. Not a real node, and never the target of a call. */
-        public val HUB: NodeId = NodeId("\$hub")
-    }
 }

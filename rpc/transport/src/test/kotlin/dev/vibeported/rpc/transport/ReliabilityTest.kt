@@ -105,7 +105,7 @@ class ReliabilityTest {
 
     private suspend fun TestScope.join(fabric: InMemoryFabric, id: String, tables: HangTable): Joined {
         val transport = fabric.connect(NodeId(id))
-        val peer = RpcPeer(transport, InMemoryFabric.HUB)
+        val peer = RpcPeer(transport, HUB)
         val membership = LiveMembership()
         val node = RpcNode(
             info = NodeInfo(NodeId(id)),
