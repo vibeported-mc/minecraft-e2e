@@ -1,12 +1,12 @@
 package dev.vibeported.mc.e2e.dsl
 
-import dev.vibeported.mc.e2e.MinecraftClientName
 import dev.vibeported.mc.e2e.dsl.mc.allowFlight
 import dev.vibeported.mc.e2e.dsl.mc.angleAround
 import dev.vibeported.mc.e2e.dsl.mc.horizontalDistanceTo
 import dev.vibeported.mc.e2e.dsl.mc.orbitStep
 import dev.vibeported.mc.e2e.dsl.mc.playerNamed
 import dev.vibeported.mc.e2e.server
+import kotlinx.serialization.Serializable
 import kotlin.math.PI
 
 /**
@@ -39,14 +39,23 @@ import kotlin.math.PI
  * @param turns how many times around, so 0.5 is a half circle
  */
 public suspend fun orbitPlayer(
-    @MinecraftClientName orbiter: String,
-    @MinecraftClientName around: String,
+    orbiter: String,
+    around: String,
     overTicks: Int = 200,
     radius: Double? = null,
     height: Double = 2.0,
     turns: Double = 1.0,
 ) {
-    server(orbiter, around, overTicks, radius, height, turns) { flier, centre, ticks, distance, up, laps ->
+    // The shape of the flight, in one value. A body takes up to five arguments, and this wanted six
+    // -- but the object is the better reading anyway: `overTicks`, `radius`, `height` and `turns`
+    // describe one thing between them, and four bare numbers in a row is a row of four bare numbers.
+    val path = OrbitPath(overTicks = overTicks, radius = radius, height = height, turns = turns)
+
+    server(orbiter, around, path) { flier, centre, along ->
+        val ticks = along.overTicks
+        val distance = along.radius
+        val up = along.height
+        val laps = along.turns
         val moving = minecraftServer.playerNamed(flier)
         val watched = minecraftServer.playerNamed(centre)
 
@@ -67,3 +76,22 @@ public suspend fun orbitPlayer(
         }
     }
 }
+
+/**
+ * The shape of one orbit, as a value a body can be handed.
+ *
+ * `@Serializable` because it crosses to the server, which is the rule for everything that does:
+ * there is no escape hatch, and a type that cannot be encoded is a compile error rather than a
+ * surprise part-way through a test.
+ */
+@Serializable
+public data class OrbitPath(
+    /** How long one full turn takes; 20 ticks is a second. */
+    public val overTicks: Int = 200,
+    /** How far out to fly, or null to keep the distance the two are already at. */
+    public val radius: Double? = null,
+    /** How far above the watched player's feet to fly. */
+    public val height: Double = 2.0,
+    /** How many times around, so 0.5 is a half circle. */
+    public val turns: Double = 1.0,
+)

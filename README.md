@@ -214,16 +214,17 @@ ordinary Kotlin lambda cannot go there: it is a closure over locals that do not 
 side.
 
 So a K2 compiler plugin lifts every block body out of its closure into a generated dispatch table
-keyed by a stable id, and rewrites the call site into a dispatch:
+keyed by a stable id, and leaves a handle naming it at the call site:
 
 ```kotlin
-// at the call site:
-invokeProcedure(id = "...BlocksKt.blocks/server[0]", target = NodeId(SERVER), args = listOf(...), ...)
+// `server { }` and `client { }` are ordinary functions taking a body at an @RpcLift
+// parameter, so what the plugin rewrites is the argument -- the call itself is left alone:
+server(LiftedBody("BlocksKt.blocks/0", "server", argSerializers, resultSerializer))
 
 // and, in a generated object beside the file facade:
-internal object ServerProcedures_BlocksKt : ProcedureTable {
-    override suspend fun invoke(id: String, scope: Any, args: List<Any?>): Any? {
-        if (id == "...BlocksKt.blocks/server[0]") return b0_server_0_(scope)
+public object BlocksKt_Rpc_server : ProcedureTable {
+    override suspend fun invoke(procedure: String, services: Services, args: List<Any?>): Any? {
+        if (procedure == "BlocksKt.blocks/0") return b0_0(services.resolve(ServerScope::class))
         ...
     }
 }
@@ -234,13 +235,12 @@ copied -- the function the frontend already built for the lambda is re-parented 
 every symbol inside it stays valid, and it stops being a closure because it is no longer nested in
 one.
 
-There are two tables per file, a server one and a client one. A dedicated server is dist-cleaned, so
-client classes are not on its classpath at all, and one table naming both would be a class it could
-not verify.
+One table per file **per role**, and the roles are open strings rather than a fixed pair.
+`server { }` and `client { }` fix theirs once, on their body parameter, which is why no call site
+mentions a role. A dedicated server is dist-cleaned, so it never claims `client` and therefore never
+resolves the table holding client bodies.
 
-That last paragraph is the seam where this design stopped generalising: `server` and `client` are
-baked into it. [`rpc/`](rpc/README.md) is the same idea with the game taken out and the roles opened
-up -- n of them, named at the call site. It is greenfield and nothing here is built on it yet.
+The whole of that machinery is [`rpc/`](rpc/README.md), which has never heard of Minecraft.
 ## Blocks run on the game thread
 
 A block body is dispatched onto its process's event loop, so **every Minecraft call in it is safe
@@ -483,13 +483,15 @@ split is enforced by the type system, not by convention:
 
 ## The rules the compiler enforces
 
-Two, both FIR checkers, so they appear under the cursor as you type once the IDE is set up -- see
+Four, all in the frontend, so they appear under the cursor as you type once the IDE is set up -- see
 [Diagnostics in the IDE](#diagnostics-in-the-ide).
 
 | Rule | Why |
 | --- | --- |
-| A block may not capture an enclosing local | That local does not exist in the process the block runs in. Pass it as an argument -- every block takes up to ten -- or declare it inside |
-| A block body must be a lambda written in place | A function reference, or a lambda held in a variable, has no stable identity to give the dispatch table |
+| A block may not capture an enclosing local | That local does not exist in the process the block runs in. Pass it as an argument -- every block takes up to five -- or declare it inside |
+| A block body must be a lambda written in place, or one handed on from another block parameter | Anything else was never lifted, and would fail at the far end of a chain with no clue which link dropped it |
+| Everything a block sends or returns must be serializable | Primitives, enums, `@Serializable` classes, and the types the build supplies a serializer for. This used to be a codec looked up by class at run time, so an unencodable value failed halfway through a test rather than at the line that wrote it |
+| A block body may not be run where it stands | What the call site holds is a handle naming a procedure, not the lambda. Hand it to a call, which is the only thing that can reach the node it belongs to |
 
 Anything top-level or static is fine to reference: every node loads the same jars.
 
@@ -519,18 +521,17 @@ registered; anything else falls through to plain kotlinx serialization.
 ## Stable ids
 
 ```
-dev.vibeported.mc.e2e.tests.BlocksKt.blocks/server[0]          a block
-dev.vibeported.mc.e2e.tests.BlocksKt.blocks/client[alex][0]    a client block
-dev.vibeported.mc.e2e.tests.BlocksKt.blocks/client[*][0]       one whose client is not a literal
+BlocksKt.blocks/0     a block
+BlocksKt.blocks/12    the thirteenth in the same declaration
 ```
 
-The facade class, then the declaration the call sits in, then a per-role ordinal in source order.
-Lexical, not structural: the id says where a block was *written*.
+The facade class, then the declaration the call sits in, then an ordinal in source order. Lexical,
+not structural: the id says where a block was *written*. Which node runs it is not part of the id --
+the role decides which table it lands in, and the call decides where it is sent.
 
 One process compiles the call site and another looks it up, so an id has to survive a rebuild on
-another machine. Ordinals count per role and per client name, so adding a client cannot renumber
-another one's blocks. Reformatting a file or editing an unrelated test leaves every id alone; moving
-a block to a different declaration changes its id. `server(id = "...")` pins one when that matters.
+another machine. Reformatting a file or editing an unrelated test leaves every id alone; moving a
+block to a different declaration, or adding one before it, changes its id.
 
 ## Modules
 
@@ -538,11 +539,10 @@ Each has a README of its own.
 
 | Module | What it is |
 | --- | --- |
-| [`:core`](core/README.md) | The framework mod: the calls, the Minecraft-typed scopes, the transport, the node runner |
+| [`:minecraft`](minecraft/README.md) | The game half: the calls, the Minecraft-typed scopes, the event loop, the serializers |
 | [`:dsl`](dsl/README.md) | The verbs -- teleport, click, assert, screenshot, record -- built out of the same calls a suite uses |
 | [`:suite`](suite/README.md) | A driver: what a test is, how long it may take, what a report looks like |
 | [`:orchestrator`](orchestrator/README.md) | Launches the games, relays between them. No Minecraft on its classpath |
-| [`:compiler-plugin`](compiler-plugin/README.md) | The K2 plugin: two FIR checkers and the IR transform that lifts blocks |
 | [`:codegen`](codegen/README.md) | A Kotlin name for every block the game loads, generated by starting it |
 | [`:gradle-plugin`](gradle-plugin/README.md) | An included build. Applies and configures everything, adds `runE2eTests` |
 | [`:capture`](capture/README.md) | FFmpeg cross-built for Windows, its Panama bindings, and the recorder that feeds NVENC |
@@ -558,20 +558,20 @@ tree uses: the FFM API the bindings are made of only became final in 22, and the
 `:core` keeps its `protocol` package to itself. FancyModLoader builds a real module graph, and two
 jars cannot both export one package to it.
 
-## What `rpc/` is, and why there are two of these
+## What `rpc/` is
 
-The harness lifts a lambda out of its call site and runs it in another process. That is a known
-thing with a name -- *multitier* programming, split at compile time -- and the version here is welded
-to this game: a closed `SERVER`/`CLIENT` enum, screenshots on the wire, a test framework's `runId` in
-the envelope.
+This harness lifts a lambda out of its call site and runs it in another process. That is a known
+thing with a name -- *multitier* programming, split at compile time -- and it is not specific to
+games in the slightest.
 
-[`rpc/`](rpc/README.md) is that core extracted and generalised: open roles, serialization resolved at
-compile time rather than reflectively at run time, and a `checkNoGame` task that fails if any of its
-modules can so much as resolve a `net.minecraft` artifact. It has its own compiler plugin, its own
-Gradle plugin and its own tests, including three processes with three different classpaths.
+[`rpc/`](rpc/README.md) is that idea on its own: open roles, serialization resolved at compile time
+rather than reflectively at run time, its own compiler plugin, its own Gradle plugin, and a
+`checkNoGame` task that fails if any of its modules can so much as resolve a `net.minecraft`
+artifact. Everything above this line is built on it, and [`:minecraft`](minecraft/README.md) is the
+only module that knows both worlds.
 
-**The harness has not been migrated onto it.** Both exist; `:core` and `:dsl` still use the plugin
-described above. Porting is separate work.
+There used to be two implementations of this idea in one repository -- the general one and the
+game-welded one it was extracted from. There is one now.
 
 ## Not built yet
 

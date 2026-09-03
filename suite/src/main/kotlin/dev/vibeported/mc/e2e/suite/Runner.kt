@@ -1,10 +1,13 @@
 package dev.vibeported.mc.e2e.suite
 
-import dev.vibeported.mc.e2e.Logs
-import dev.vibeported.mc.e2e.RunContext
-import dev.vibeported.mc.e2e.protocol.AssertionFailure
-import dev.vibeported.mc.e2e.rpc.RemoteInvocationException
-import dev.vibeported.mc.e2e.rpc.toRemoteFailure
+import dev.vibeported.mc.e2e.Artifact
+import dev.vibeported.mc.e2e.ArtifactSink
+import dev.vibeported.mc.e2e.LogSink
+import dev.vibeported.mc.e2e.TestContext
+import dev.vibeported.mc.e2e.announceTest
+import dev.vibeported.rpc.currentNode
+import dev.vibeported.rpc.transport.RemoteCallException
+import dev.vibeported.rpc.transport.RemoteFailure
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -49,38 +52,50 @@ public object Runner {
 
     public suspend fun runAll(suites: List<Suite>, timeout: Duration = 5.minutes): RunReport {
         val startedAt = System.currentTimeMillis()
+
+        // Nodes send their log lines and their evidence here, as ordinary calls. Registered on this
+        // process's own node, which is what the orchestrator role's table resolves them against.
+        val services = currentNode().services
+        services.provide(LogSink::class, LogSink { collected += it })
+        services.provide(ArtifactSink::class, ArtifactSink { evidence += it })
+
         val reports = suites.flatMap { suite -> suite.tests.map { runTest(suite, it, timeout) } }
         return RunReport(reports, startedAt, System.currentTimeMillis() - startedAt)
     }
 
+    // Written to from whichever thread a call arrived on, drained per test.
+    private val collected = CopyOnWriteArrayList<dev.vibeported.mc.e2e.LogLine>()
+    private val evidence = CopyOnWriteArrayList<Artifact>()
+
     private suspend fun runTest(suite: Suite, test: Test, timeout: Duration): TestReport {
         val runId = suite.name + "/" + test.name + "#" + runCounter.incrementAndGet()
-        val lines = CopyOnWriteArrayList<LogLine>()
-        Logs.listener = { event ->
-            lines += LogLine(event.from, event.procedure, event.atMillis, event.message)
-        }
+        collected.clear()
+        evidence.clear()
+
+        // Told once, to everyone, rather than carried on every request. A node needs this to file a
+        // screenshot or a log line under the right test, and putting it in the transport would have
+        // meant the transport knowing what a test is.
+        announceTest(TestContext(runId = runId, testName = test.name))
 
         val startedAt = System.currentTimeMillis()
-        var failure: dev.vibeported.mc.e2e.rpc.RemoteFailure? = null
+        var failure: RemoteFailure? = null
 
         try {
-            withTimeout(timeout) {
-                // The run identity travels with every call made underneath, which is what lets a
-                // node file its screenshots and log lines under the right test.
-                withContext(RunContext(runId, test.name)) { test.body() }
-            }
+            withTimeout(timeout) { test.body() }
         } catch (expired: TimeoutCancellationException) {
-            failure = dev.vibeported.mc.e2e.rpc.RemoteFailure(
+            failure = RemoteFailure(
                 type = "dev.vibeported.mc.e2e.suite.TestTimedOut",
                 message = "`" + test.name + "` ran for " + timeout + " without finishing",
                 stack = "",
             )
-        } catch (remote: RemoteInvocationException) {
-            failure = remote.failure
+        } catch (remote: RemoteCallException) {
+            failure = remote.remote
         } catch (thrown: Throwable) {
-            failure = thrown.toRemoteFailure()
-        } finally {
-            Logs.listener = null
+            failure = RemoteFailure(
+                type = thrown::class.java.name,
+                message = thrown.message,
+                stack = thrown.stackTraceToString(),
+            )
         }
 
         return TestReport(
@@ -90,12 +105,12 @@ public object Runner {
             testName = test.name,
             outcome = when {
                 failure == null -> Outcome.PASSED
-                failure.assertion -> Outcome.FAILED
+                failure.isAssertion -> Outcome.FAILED
                 else -> Outcome.ERROR
             },
             durationMillis = System.currentTimeMillis() - startedAt,
-            blocks = emptyList(),
-            log = lines.toList(),
+            log = collected.map { LogLine(it.node, it.atMillis, it.message) },
+            artifacts = evidence.map { it.path },
             failure = failure,
         )
     }

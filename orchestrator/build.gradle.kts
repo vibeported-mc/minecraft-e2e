@@ -27,7 +27,7 @@ repositories {
 }
 
 dependencies {
-    api(project(":core"))
+    api(project(":minecraft"))
     implementation(libs.coroutines.core)
     implementation(libs.serialization.json)
 

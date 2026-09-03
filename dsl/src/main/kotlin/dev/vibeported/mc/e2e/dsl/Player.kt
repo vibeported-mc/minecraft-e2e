@@ -2,7 +2,6 @@ package dev.vibeported.mc.e2e.dsl
 
 import dev.vibeported.mc.e2e.ClientScope
 import dev.vibeported.mc.e2e.DEFAULT_CLIENT
-import dev.vibeported.mc.e2e.MinecraftClientName
 import dev.vibeported.mc.e2e.ServerScope
 import dev.vibeported.mc.e2e.client
 import dev.vibeported.mc.e2e.dsl.mc.awaitArrival
@@ -31,7 +30,7 @@ import net.minecraft.world.item.ItemStack
  * line and survives that chain changing.
  */
 public suspend fun ServerScope.waitForPlayer(
-    @MinecraftClientName client: String = DEFAULT_CLIENT,
+    client: String = DEFAULT_CLIENT,
     mode: AssertMode = timeoutSec(30),
 ): ServerPlayer {
     var found: ServerPlayer? = null
@@ -61,7 +60,7 @@ private fun ServerPlayer.isReady(): Boolean =
  * setup, not the thing under test, and doing it here keeps it out of the part that is.
  */
 public suspend fun ServerScope.giveItem(
-    @MinecraftClientName client: String = DEFAULT_CLIENT,
+    client: String = DEFAULT_CLIENT,
     slot: InventorySlot,
     stack: ItemStack,
 ) {
@@ -81,7 +80,7 @@ public suspend fun ServerScope.giveItem(
  * Distinct from [waitForPlayer], which insists on someone who is up and about: after a death the
  * player is still in the list, still addressable, and emphatically not ready to be tested against.
  */
-public fun ServerScope.playerOrNull(@MinecraftClientName client: String = DEFAULT_CLIENT): ServerPlayer? =
+public fun ServerScope.playerOrNull(client: String = DEFAULT_CLIENT): ServerPlayer? =
     minecraftServer.playerList.getPlayerByName(client)
 
 /**
@@ -92,7 +91,7 @@ public fun ServerScope.playerOrNull(@MinecraftClientName client: String = DEFAUL
  * falling over before any of it is decided.
  */
 public suspend fun ServerScope.assertPlayerDead(
-    @MinecraftClientName client: String = DEFAULT_CLIENT,
+    client: String = DEFAULT_CLIENT,
     mode: AssertMode = timeoutSec(20),
 ) {
     if (awaitCondition(mode) { playerOrNull(client)?.isDeadOrDying == true }) return
@@ -111,7 +110,7 @@ public suspend fun ServerScope.assertPlayerDead(
  * This client's own opinion, deliberately: it is what the person at this screen would be looking
  * at, and it is the position a test should chase when it wants to keep up with someone moving.
  */
-public fun ClientScope.positionOf(@MinecraftClientName client: String): BlockPos? =
+public fun ClientScope.positionOf(client: String): BlockPos? =
     clientLevel?.players()?.firstOrNull { it.name.string == client }?.blockPosition()
 
 /**
@@ -120,7 +119,7 @@ public fun ClientScope.positionOf(@MinecraftClientName client: String): BlockPos
  * A dead player is still in the world -- they are looking at their own death screen -- so "there"
  * and "alive" are different questions, and a test that keeps acting on someone needs the second.
  */
-public fun ClientScope.isAlive(@MinecraftClientName client: String): Boolean =
+public fun ClientScope.isAlive(client: String): Boolean =
     clientLevel?.players()?.firstOrNull { it.name.string == client }?.isAlive == true
 
 
@@ -145,7 +144,7 @@ private val ACTION_TIMEOUT_TICKS: Int =
  * server body it is a direct call and costs nothing.
  */
 public suspend fun teleport(
-    @MinecraftClientName client: String = DEFAULT_CLIENT,
+    client: String = DEFAULT_CLIENT,
     pos: BlockPos,
     flying: Boolean = false,
 ) {
@@ -158,7 +157,7 @@ public suspend fun teleport(
 }
 
 /** Turns a player to face [pos], returning once that client is looking at it. @see teleport */
-public suspend fun lookAt(@MinecraftClientName client: String = DEFAULT_CLIENT, pos: BlockPos) {
+public suspend fun lookAt(client: String = DEFAULT_CLIENT, pos: BlockPos) {
     server(client, pos) { name, target -> minecraftServer.turnPlayerToward(name, target) }
 
     client(client, pos) { target ->
@@ -169,8 +168,8 @@ public suspend fun lookAt(@MinecraftClientName client: String = DEFAULT_CLIENT, 
 
 /** Turns one player to face another, returning once they are. @see teleport */
 public suspend fun lookAtPlayer(
-    @MinecraftClientName client: String = DEFAULT_CLIENT,
-    @MinecraftClientName target: String,
+    client: String = DEFAULT_CLIENT,
+    target: String,
 ) {
     server(client, target) { name, other -> minecraftServer.turnPlayerTowardPlayer(name, other) }
 
@@ -188,5 +187,5 @@ public suspend fun ClientScope.teleport(pos: BlockPos, flying: Boolean = false):
 public suspend fun ClientScope.lookAt(pos: BlockPos): Unit = lookAt(thisClient, pos)
 
 /** @see lookAtPlayer */
-public suspend fun ClientScope.lookAtPlayer(@MinecraftClientName target: String): Unit =
+public suspend fun ClientScope.lookAtPlayer(target: String): Unit =
     lookAtPlayer(thisClient, target)

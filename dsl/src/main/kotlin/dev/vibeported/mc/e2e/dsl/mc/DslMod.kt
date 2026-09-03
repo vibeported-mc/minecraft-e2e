@@ -1,5 +1,6 @@
 package dev.vibeported.mc.e2e.dsl.mc
 
+import dev.vibeported.mc.e2e.startedRole
 import net.neoforged.bus.api.IEventBus
 import net.neoforged.fml.ModContainer
 import net.neoforged.fml.common.Mod
@@ -19,13 +20,14 @@ class DslMod(bus: IEventBus, container: ModContainer) {
 
     init {
         // Only under test: the mod sitting in an ordinary development client changes nothing.
-        if (System.getProperty(ROLE_PROPERTY) == "CLIENT") {
+        // Asked through `startedRole()` rather than compared to a literal here -- the literal is
+        // how this stopped installing without anything failing.
+        if (startedRole() == "client") {
             ClientHooks.install()
         }
     }
 
     companion object {
         const val ID: String = "e2e_dsl"
-        const val ROLE_PROPERTY: String = "e2e.node.role"
     }
 }

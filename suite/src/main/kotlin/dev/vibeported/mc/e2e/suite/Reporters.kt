@@ -8,9 +8,6 @@ public object ConsoleReporter {
     public fun render(report: RunReport): String = buildString {
         report.tests.forEach { test ->
             appendLine("${mark(test.outcome)} ${test.suiteName} > ${test.testName}  (${test.durationMillis} ms)")
-            test.blocks.forEach { block ->
-                appendLine("    ${mark(block.outcome)} ${block.node}  ${block.id}  (${block.durationMillis} ms)")
-            }
             if (test.log.isNotEmpty()) {
                 appendLine("    log:")
                 test.log.sortedBy { it.atMillis }.forEach {
@@ -18,10 +15,9 @@ public object ConsoleReporter {
                 }
             }
             test.failure?.let { failure ->
-                appendLine("    ${if (failure.assertion) "assertion failed" else failure.type}: ${failure.message}")
-                failure.node?.let { appendLine("    on: $it") }
-                failure.screenshot?.let { appendLine("    screenshot: $it") }
-                if (!failure.assertion) {
+                appendLine("    ${if (failure.isAssertion) "assertion failed" else failure.type}: ${failure.message}")
+                test.artifacts.forEach { appendLine("    evidence: $it") }
+                if (!failure.isAssertion) {
                     failure.stack.lineSequence().take(12).forEach { appendLine("      $it") }
                 }
             }

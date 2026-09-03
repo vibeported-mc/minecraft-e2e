@@ -35,13 +35,12 @@ dependencyResolutionManagement {
 rootProject.name = "minecraft-e2e"
 
 include(
-    ":core",
+    ":minecraft",
     ":dsl",
     ":suite",
     ":orchestrator",
     ":codegen",
     ":example",
-    ":compiler-plugin",
 
     // The RPC framework the harness is built on, and which knows nothing about Minecraft. Kept in
     // this build for the shared catalog and conventions; kept free of the game by never applying

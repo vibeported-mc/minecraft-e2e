@@ -114,6 +114,8 @@ class E2eGradlePlugin : Plugin<Project> {
         neoForge.mods.create(modId) { it.sourceSet(suites) }
 
         val generatedDir = project.layout.buildDirectory.dir("generated/e2e")
+        // Where the compiler plugin writes the manifest naming every lifted body and the class that
+        // holds it. A resource root, so it is packaged, and a task output, so a stale one rebuilds.
         val indexDir = generatedDir.map { it.dir("index") }
         val metadataDir = generatedDir.map { it.dir("metadata") }
 
@@ -157,7 +159,15 @@ class E2eGradlePlugin : Plugin<Project> {
             task.outputs.dir(indexDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {
-                    listOf("-P", "plugin:dev.vibeported.mc.e2e:indexDir=${indexDir.get().asFile.absolutePath}")
+                    listOf(
+                        "-P",
+                        "plugin:dev.vibeported.rpc:manifestDir=${indexDir.get().asFile.absolutePath}",
+                        // A `BlockPos` is not `@Serializable` and never will be, so the compiler is
+                        // told its name and `:minecraft` supplies the serializer to match. Anything
+                        // not named here still has to be serializable, and is checked.
+                        "-P",
+                        "plugin:dev.vibeported.rpc:contextual=net.minecraft.core.BlockPos",
+                    )
                 }
             )
         }

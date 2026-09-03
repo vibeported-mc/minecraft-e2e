@@ -1,21 +1,25 @@
 package dev.vibeported.mc.e2e.launcher
 
-import dev.vibeported.mc.e2e.Node
-import dev.vibeported.mc.e2e.ScopeFactory
-import dev.vibeported.mc.e2e.mc.McValueCodec
-import dev.vibeported.mc.e2e.node.TableRegistry
-import dev.vibeported.mc.e2e.orchestrator.Orchestrator
-import dev.vibeported.mc.e2e.protocol.NodeId
-import dev.vibeported.mc.e2e.rpc.RpcPeer
-import dev.vibeported.mc.e2e.rpc.SocketHub
+import dev.vibeported.mc.e2e.ClientStarter
+import dev.vibeported.mc.e2e.CurrentTest
+import dev.vibeported.mc.e2e.ORCHESTRATOR_NODE
+import dev.vibeported.mc.e2e.ORCHESTRATOR_ROLE
+import dev.vibeported.mc.e2e.mc.MinecraftSerializers
+import dev.vibeported.rpc.CborWireFormat
+import dev.vibeported.rpc.NodeId
+import dev.vibeported.rpc.Services
+import dev.vibeported.rpc.host.HubAddress
+import dev.vibeported.rpc.host.RpcConnection
+import dev.vibeported.rpc.host.RpcHost
+import dev.vibeported.rpc.transport.SocketHub
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.json.Json
 import java.io.File
 import kotlin.system.exitProcess
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Brings the cluster up, wires the transport, and runs somebody else main.
@@ -46,38 +50,57 @@ public object OrchestratorBootstrap {
     private suspend fun run(plan: LaunchPlan, args: Array<String>): Boolean {
         val logDir = File(File(plan.reportDir).apply { mkdirs() }, "logs")
 
-        // Every client the compiler could name, from every module on the classpath, plus whatever
-        // the build declared. Anything else starts the first time a call is addressed to it.
-        val tables = TableRegistry.load()
-        val upFront = (tables.clients() + plan.clientNames).distinct().sorted()
+        // Whatever the build declared. A client nobody named starts the first time a call is
+        // addressed to it -- which used to need a set the compiler collected, and does not any
+        // more: `client(name)` asks this process to start one when the roster has no such node.
+        val upFront = plan.clientNames.distinct().sorted()
         println("e2e: starting " + upFront.size + " client(s) up front: " + upFront)
 
-        return SocketHub(plan.port).use { hub ->
+        val hub = SocketHub(plan.port)
+        return try {
             val scope = CoroutineScope(kotlin.coroutines.coroutineContext + SupervisorJob())
             hub.start(scope)
             println("e2e: transport listening on port " + hub.port)
 
-            val cluster = Cluster(plan, logDir, upFront)
-            val orchestrator = Orchestrator(
-                peer = RpcPeer(hub.transport(), callTimeout = plan.callTimeoutSeconds.seconds),
-                connected = hub::connected,
-                startClient = { name -> cluster.startClient(name, hub) },
-            )
-            orchestrator.start(scope)
-            cluster.start(hub)
-
-            // Installed process-wide as well as in the context: a main that starts its own
-            // `runBlocking`, as a JUnit test would, must still be able to call a procedure.
-            val node = Node(
-                self = NodeId.ORCHESTRATOR,
-                tables = tables,
-                codec = McValueCodec(),
-                relay = orchestrator::route,
-                scopes = ScopeFactory { _, block ->
-                    error("`" + block + "` was addressed to the orchestrator, which runs no game")
+            // The cluster reads the roster to decide a process is ready, and the node that holds
+            // that roster does not exist yet -- so it reads through a reference filled in below.
+            var joined: RpcConnection? = null
+            val cluster = Cluster(
+                plan = plan,
+                logDir = logDir,
+                clients = upFront,
+                port = hub.port,
+                joined = {
+                    joined?.membership?.snapshot()?.map { it.id.value }?.toSet().orEmpty()
                 },
             )
-            Node.install(node)
+
+            // This process is a node like any other, and one that serves procedures: starting a
+            // client, taking a log line, filing a screenshot. It runs no game, so it resolves no
+            // game tables -- the `orchestrator` role is what keeps those apart.
+            val services = Services()
+            services.provide(ClientStarter::class, ClientStarter { name -> cluster.startClient(name) })
+            // This node is told which test is running like any other -- the announcement goes to
+            // everyone, and it lands here too.
+            services.provide(CurrentTest::class, CurrentTest())
+
+            val connection = RpcHost(
+                id = NodeId(ORCHESTRATOR_NODE),
+                roles = setOf(ORCHESTRATOR_ROLE),
+                services = services,
+                // The test bodies run *here*, so this is the process that encodes a `BlockPos` on
+                // its way to the server. It needs the game's serializers as much as a game does.
+                format = CborWireFormat(Cbor { serializersModule = MinecraftSerializers.module }),
+                // This one is load-bearing and its absence is baffling. FancyModLoader loads mod
+                // classes in a transforming loader of its own; resolving tables through any other
+                // loader gets a *second* copy of every class in them, and a receiver registered
+                // here then fails to match the one a generated table asks for -- with an error
+                // listing the very type it says is missing.
+                loader = OrchestratorBootstrap::class.java.classLoader,
+            ).connect(scope, HubAddress("127.0.0.1", hub.port))
+            joined = connection
+
+            cluster.start()
 
             try {
                 invokeMain(plan.mainClass, args)
@@ -87,8 +110,11 @@ public object OrchestratorBootstrap {
                 true
             } finally {
                 cluster.stop()
+                runCatching { connection.leave() }
                 scope.cancel()
             }
+        } finally {
+            hub.stop()
         }
     }
 

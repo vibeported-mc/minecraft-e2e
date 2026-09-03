@@ -2,7 +2,6 @@ package dev.vibeported.mc.e2e.dsl
 
 import dev.vibeported.mc.e2e.ClientScope
 import dev.vibeported.mc.e2e.DEFAULT_CLIENT
-import dev.vibeported.mc.e2e.MinecraftClientName
 import dev.vibeported.mc.e2e.client
 import dev.vibeported.mc.e2e.dsl.mc.record.ScreenRecorder
 import kotlinx.serialization.Serializable
@@ -85,7 +84,7 @@ public enum class VideoCodec(public val encoder: String) {
  * @param videoFileName the file, under `<report dir>/recordings/<client>/`
  */
 public suspend fun <R> record(
-    @MinecraftClientName clientName: String = DEFAULT_CLIENT,
+    clientName: String = DEFAULT_CLIENT,
     videoFileName: String,
     options: RecordingOptions = RecordingOptions(),
     body: suspend () -> R,

@@ -1,7 +1,6 @@
 package dev.vibeported.mc.e2e.launcher
 
-import dev.vibeported.mc.e2e.protocol.NodeId
-import dev.vibeported.mc.e2e.rpc.SocketHub
+import dev.vibeported.mc.e2e.SERVER_NODE
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -18,10 +17,19 @@ public class Cluster(
     private val plan: LaunchPlan,
     public val logDir: File,
     private val clients: List<String>,
+    /** The port the hub is listening on, which every game process is told. */
+    private val port: Int,
+    /**
+     * Which nodes have joined, by name.
+     *
+     * The roster rather than the hub's socket list, and the difference matters: a game dials in
+     * when it is *worth testing* -- a started server, a client actually standing in a level -- so
+     * joining is what readiness means here, and this is where that shows up.
+     */
+    private val joined: () -> Set<String>,
 ) {
 
     private val processes = mutableListOf<GameProcess>()
-    private var port: Int = 0
 
     init {
         // A game process outlives its parent quite happily, and an orchestrator that is killed --
@@ -30,18 +38,16 @@ public class Cluster(
         Runtime.getRuntime().addShutdownHook(Thread { stop() })
     }
 
-    public suspend fun start(hub: SocketHub) {
-        port = hub.port
-
+    public suspend fun start() {
         println("e2e: starting the dedicated server")
         val server = GameProcess.start(
             spec = plan.server,
-            extraJvmArgs = nodeArgs() + listOf("-De2e.node.role=SERVER"),
+            extraJvmArgs = nodeArgs() + listOf("-De2e.node.role=server"),
             logDir = logDir,
             echo = ::println,
         )
         processes += server
-        awaitNode(hub, NodeId.SERVER, server)
+        awaitNode(SERVER_NODE, server)
         println("e2e: server is up")
 
         // Started together rather than one after another. A client takes the better part of a
@@ -52,7 +58,7 @@ public class Cluster(
         coroutineScope {
             started.forEach { (name, process) ->
                 launch {
-                    awaitNode(hub, NodeId.client(name), process)
+                    awaitNode(name, process)
                     println("e2e: client `$name` is up")
                 }
             }
@@ -67,13 +73,13 @@ public class Cluster(
      * waits here for a whole client to boot and join, which is why a name worth knowing in advance
      * is worth writing as a literal.
      */
-    public suspend fun startClient(name: String, hub: SocketHub) {
+    public suspend fun startClient(name: String) {
         val existing = processes.firstOrNull { it.name == "client-$name" }
         if (existing != null && existing.isAlive) return
 
         println("e2e: client `$name` was addressed but is not running, so starting it now")
         val process = launchClient(name)
-        awaitNode(hub, NodeId.client(name), process)
+        awaitNode(name, process)
         println("e2e: client `$name` is up")
     }
 
@@ -91,7 +97,7 @@ public class Cluster(
         val process = GameProcess.start(
             spec = template.copy(name = "client-$name", workingDir = gameDir.absolutePath),
             extraJvmArgs = nodeArgs() + listOf(
-                "-De2e.node.role=CLIENT",
+                "-De2e.node.role=client",
                 "-De2e.node.name=$name",
                 // The client joins the server itself; the two never learn about each other any
                 // other way.
@@ -165,8 +171,8 @@ public class Cluster(
     }
 
     private fun nodeArgs() = listOf(
-        "-De2e.orchestrator.host=127.0.0.1",
-        "-De2e.orchestrator.port=$port",
+        "-De2e.hub.host=127.0.0.1",
+        "-De2e.hub.port=$port",
         // Read by the node that waits for a player to arrive or turn, which is the only party
         // that can see whether the effect landed.
         "-De2e.action.timeout.seconds=${plan.actionTimeoutSeconds}",
@@ -181,10 +187,10 @@ public class Cluster(
      * Without the liveness check a game that fails on startup leaves the orchestrator sitting
      * out the whole startup timeout with nothing to show, when the reason is already in its log.
      */
-    private suspend fun awaitNode(hub: SocketHub, node: NodeId, process: GameProcess) {
+    private suspend fun awaitNode(node: String, process: GameProcess) {
         val deadline = System.nanoTime() + plan.startupTimeoutSeconds * 1_000_000_000L
         while (System.nanoTime() < deadline) {
-            if (node in hub.connected()) return
+            if (node in joined()) return
             if (!process.isAlive) {
                 error(
                     "The ${process.name} process exited with code ${process.exitCode()} before " +
