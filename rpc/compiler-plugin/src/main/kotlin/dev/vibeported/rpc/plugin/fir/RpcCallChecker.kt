@@ -1,5 +1,6 @@
 package dev.vibeported.rpc.plugin.fir
 
+import dev.vibeported.rpc.plugin.RoleIndex
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.FirElement
@@ -37,6 +38,17 @@ internal object RpcCallChecker : FirExpressionChecker<FirFunctionCall>(MppChecke
             reporter.reportOn(body.source, RpcDiagnostics.BODY_NOT_LITERAL)
             return
         }
+
+        // Written down for the backend, which cannot see the annotation: an expression target forces
+        // SOURCE retention, so the role is gone by the time a body is lifted into a table. Keyed by
+        // the call rather than the lambda -- an annotated lambda begins at the annotation here and
+        // at the brace there, so only the call site is spelled the same in both.
+        val file = context.containingFileSymbol?.fir?.sourceFile?.path
+        val offset = expression.source?.startOffset
+        if (file != null && offset != null) {
+            RoleIndex.record(file, offset, EntryPoints.roleOf(body, context))
+        }
+
         checkCaptures(body.anonymousFunction)
     }
 
