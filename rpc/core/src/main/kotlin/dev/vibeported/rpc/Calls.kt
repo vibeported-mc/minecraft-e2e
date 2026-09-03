@@ -13,7 +13,25 @@ package dev.vibeported.rpc
  */
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.BINARY)
-public annotation class RpcEntryPoint
+public annotation class RpcEntryPoint(public val kind: RpcDispatch = RpcDispatch.ONE)
+
+/**
+ * Which dispatcher an entry point stands for.
+ *
+ * Declared rather than inferred from the function's name, for the same reason the entry point
+ * itself is: a layer naming its own vocabulary needs a way to say what it means, and matching on
+ * names would work only for the names this module happens to ship.
+ */
+public enum class RpcDispatch {
+    /** Exactly one node, and a failure if the target names none or several. */
+    ONE,
+
+    /** Every matching node, in parallel, failing as soon as any of them does. */
+    EACH,
+
+    /** Every matching node, in parallel, each reporting for itself. */
+    EACH_CATCHING,
+}
 
 /**
  * What a procedure body sees on the node that runs it.
@@ -75,14 +93,14 @@ public suspend fun <A1, A2, A3, R> rpcCall(
 ): R = notApplied()
 
 /** Every matching node, in parallel, failing as soon as one of them does. */
-@RpcEntryPoint
+@RpcEntryPoint(RpcDispatch.EACH)
 public suspend fun <R> forEachRpcCall(
     target: RpcTarget,
     parallel: Boolean = true,
     body: suspend RpcScope.() -> R,
 ): Map<NodeId, R> = notApplied()
 
-@RpcEntryPoint
+@RpcEntryPoint(RpcDispatch.EACH)
 public suspend fun <A1, R> forEachRpcCall(
     target: RpcTarget,
     a1: A1,
@@ -91,14 +109,14 @@ public suspend fun <A1, R> forEachRpcCall(
 ): Map<NodeId, R> = notApplied()
 
 /** Every matching node, in parallel, each reporting for itself. */
-@RpcEntryPoint
+@RpcEntryPoint(RpcDispatch.EACH_CATCHING)
 public suspend fun <R> forEachRpcCallCatching(
     target: RpcTarget,
     parallel: Boolean = true,
     body: suspend RpcScope.() -> R,
 ): Map<NodeId, Result<R>> = notApplied()
 
-@RpcEntryPoint
+@RpcEntryPoint(RpcDispatch.EACH_CATCHING)
 public suspend fun <A1, R> forEachRpcCallCatching(
     target: RpcTarget,
     a1: A1,

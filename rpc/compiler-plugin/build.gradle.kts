@@ -13,6 +13,8 @@ dependencies {
     // The snippets under test call the real entry points, so the module declaring them has to be
     // resolvable. No Minecraft anywhere, unlike the harness's own plugin.
     testImplementation(project(":rpc:core"))
+    // The end-to-end test stands a cluster up inside the compiled snippet.
+    testImplementation(project(":rpc:testkit"))
 }
 
 tasks.withType<KotlinCompile>().configureEach {

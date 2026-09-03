@@ -70,6 +70,17 @@ internal class RpcSymbols(private val context: IrPluginContext) {
     val encode: IrSimpleFunctionSymbol = wireFormat.functions.single { it.owner.name.asString() == "encode" }
     val decode: IrSimpleFunctionSymbol = wireFormat.functions.single { it.owner.name.asString() == "decode" }
 
+    /** The three dispatchers a rewritten call site lands on. @see dev.vibeported.rpc.RpcDispatch */
+    val dispatchers: Map<String, IrSimpleFunctionSymbol> = mapOf(
+        "ONE" to single("dispatch"),
+        "EACH" to single("dispatchEach"),
+        "EACH_CATCHING" to single("dispatchEachCatching"),
+    )
+
+    private fun single(name: String): IrSimpleFunctionSymbol = context
+        .referenceFunctions(CallableId(CORE, Name.identifier(name)))
+        .single()
+
     /** Called by the halves that are scaffolding until serializer resolution lands. */
     val notGenerated: IrSimpleFunctionSymbol = context
         .referenceFunctions(CallableId(CORE, Name.identifier("serializationNotGenerated")))
