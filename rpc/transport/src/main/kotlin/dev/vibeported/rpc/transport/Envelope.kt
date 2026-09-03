@@ -56,6 +56,40 @@ public data class Request(
     public val args: List<ByteArray> = emptyList(),
 ) : Envelope
 
+/**
+ * Stop running that, I am no longer waiting for it.
+ *
+ * Without this, cancelling a caller only discards the answer: the body keeps running on the other
+ * node, with whatever it was doing to the world still going on. A test abandoned halfway would leave
+ * a client still dutifully carrying out its last instruction.
+ */
+@Serializable
+public data class Cancel(
+    public val callId: Long,
+    public val from: NodeId,
+    override val to: NodeId,
+) : Envelope
+
+/**
+ * Leaving on purpose.
+ *
+ * Not a liveness mechanism -- a socket closing says that already, and faster. This says something a
+ * dropped connection cannot: that the departure was intended, so a report can tell a client that
+ * finished from one that died.
+ */
+@Serializable
+public data class Goodbye(
+    public val from: NodeId,
+    override val to: NodeId,
+) : Envelope
+
+/** Still here. @see Goodbye for the difference between leaving and vanishing. */
+@Serializable
+public data class Heartbeat(
+    public val from: NodeId,
+    override val to: NodeId,
+) : Envelope
+
 @Serializable
 public data class Response(
     public val callId: Long,
@@ -77,6 +111,18 @@ public data class RemoteFailure(
     public val message: String?,
     public val stack: String,
 )
+
+/**
+ * Raised when the node a call was sent to is no longer there.
+ *
+ * The alternative is waiting forever for an answer nobody is coming back with, which turns a crashed
+ * client into a hung test rather than a failed one -- much the worse of the two.
+ */
+public class NodeGoneException(
+    public val node: NodeId,
+    public val procedure: String,
+    public val why: String,
+) : RuntimeException("`" + procedure + "` was sent to " + node + ", which is gone: " + why)
 
 /** Raised locally when the other end reported a failure. @see RemoteFailure */
 public class RemoteCallException(

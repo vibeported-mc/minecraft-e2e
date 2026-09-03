@@ -19,6 +19,7 @@ public class InMemoryFabric {
 
     private val mailboxes = ConcurrentHashMap<NodeId, Channel<Envelope>>()
     private val roster = ConcurrentHashMap<NodeId, NodeInfo>()
+    private val lastSeen = ConcurrentHashMap<NodeId, Long>()
 
     /** Opens this node's connection. It is not in the roster until it announces itself. */
     public fun connect(id: NodeId): Transport {
@@ -29,15 +30,40 @@ public class InMemoryFabric {
 
     public suspend fun disconnect(id: NodeId) {
         mailboxes.remove(id)?.close()
+        lastSeen.remove(id)
         if (roster.remove(id) != null) publishRoster()
+    }
+
+    /**
+     * Drops nodes that have not been heard from within [within].
+     *
+     * The case a closing socket cannot catch: a node still holding its connection open while being
+     * unable to answer. Called on a timer by whoever owns the cluster, rather than run here, so that
+     * a test can advance it deliberately instead of waiting.
+     */
+    public suspend fun evictSilent(within: kotlin.time.Duration) {
+        val deadline = System.nanoTime() - within.inWholeNanoseconds
+        roster.keys.toList()
+            .filter { (lastSeen[it] ?: 0L) < deadline }
+            .forEach { disconnect(it) }
     }
 
     private suspend fun deliver(envelope: Envelope) {
         if (envelope.to == HUB) {
             // The hub's whole job: learn who is there, and tell everyone else.
-            if (envelope is Hello) {
-                roster[envelope.info.id] = envelope.info
-                publishRoster()
+            when (envelope) {
+                is Hello -> {
+                    roster[envelope.info.id] = envelope.info
+                    lastSeen[envelope.info.id] = System.nanoTime()
+                    publishRoster()
+                }
+
+                // Meant it. Distinguished from a drop so a report can tell the two apart.
+                is Goodbye -> disconnect(envelope.from)
+
+                is Heartbeat -> lastSeen[envelope.from] = System.nanoTime()
+
+                else -> Unit
             }
             return
         }
