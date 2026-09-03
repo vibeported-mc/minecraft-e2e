@@ -13,7 +13,6 @@ import dev.vibeported.mc.e2e.startedNodeName
 import dev.vibeported.mc.e2e.startedRole
 import dev.vibeported.mc.e2e.ServerScope
 import dev.vibeported.mc.e2e.reportArtifact
-import dev.vibeported.rpc.CborWireFormat
 import dev.vibeported.rpc.NodeId
 import dev.vibeported.rpc.Role
 import dev.vibeported.rpc.RpcScope
@@ -26,7 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.serialization.cbor.Cbor
 import net.minecraft.client.Minecraft
 import net.minecraft.server.MinecraftServer
 import net.minecraft.util.thread.BlockableEventLoop
@@ -122,7 +120,6 @@ public class E2eMod {
                 id = id,
                 roles = setOf(role),
                 services = services,
-                format = CborWireFormat(Cbor { serializersModule = MinecraftSerializers.module }),
                 dispatcher = GameThreadDispatcher(loop),
                 // The loader this mod was loaded by, so the tables resolve to the same classes the
                 // rest of this node is built out of. @see OrchestratorBootstrap for what the wrong

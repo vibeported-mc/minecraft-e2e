@@ -162,11 +162,6 @@ class E2eGradlePlugin : Plugin<Project> {
                     listOf(
                         "-P",
                         "plugin:dev.vibeported.rpc:manifestDir=${indexDir.get().asFile.absolutePath}",
-                        // A `BlockPos` is not `@Serializable` and never will be, so the compiler is
-                        // told its name and `:minecraft` supplies the serializer to match. Anything
-                        // not named here still has to be serializable, and is checked.
-                        "-P",
-                        "plugin:dev.vibeported.rpc:contextual=net.minecraft.core.BlockPos",
                     )
                 }
             )

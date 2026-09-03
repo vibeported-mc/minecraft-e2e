@@ -7,10 +7,12 @@ import dev.vibeported.rpc.NodeInfo
 import dev.vibeported.rpc.ProcedureServer
 import dev.vibeported.rpc.Role
 import dev.vibeported.rpc.RpcNode
+import dev.vibeported.rpc.SerializerRegistry
 import dev.vibeported.rpc.Services
 import dev.vibeported.rpc.TableRegistry
 import dev.vibeported.rpc.WireFormat
 import dev.vibeported.rpc.transport.HUB
+import kotlinx.serialization.cbor.Cbor
 import dev.vibeported.rpc.transport.LiveMembership
 import dev.vibeported.rpc.transport.RpcPeer
 import dev.vibeported.rpc.transport.SocketTransport
@@ -74,7 +76,15 @@ public class RpcHost(
     public val roles: Set<Role> = emptySet(),
     /** What this node offers the bodies that land on it. @see Services */
     public val services: Services = Services(),
-    public val format: WireFormat = CborWireFormat(),
+    /**
+     * How values are encoded, when the classpath's own answer will not do.
+     *
+     * The default is CBOR over every serializer the classpath declared -- assembled by
+     * [SerializerRegistry] from the manifests the compiler wrote, so a module that declares an
+     * `@RpcSerializer` is understood by every node that has it and nothing has to be registered
+     * here. Pass one only to change the encoding itself.
+     */
+    format: WireFormat? = null,
     /**
      * What this node serves, when it should not be read off the classpath.
      *
@@ -106,6 +116,12 @@ public class RpcHost(
     public val onBodyFailure: suspend (procedure: String, failure: Throwable) -> Unit = { _, _ -> },
     public val loader: ClassLoader = RpcHost::class.java.classLoader,
 ) {
+
+    // Built from `loader` rather than from this class's own, which is the same distinction the
+    // table registry makes: under a mod loader the two are different, and the one holding the
+    // serializers is the one the caller named.
+    public val format: WireFormat = format
+        ?: CborWireFormat(Cbor { serializersModule = SerializerRegistry.load(loader) })
 
     public suspend fun connect(scope: CoroutineScope, hub: HubAddress): RpcConnection {
         val transport = SocketTransport.connect(id, hub.host, hub.port)

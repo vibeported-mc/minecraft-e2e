@@ -1,13 +1,13 @@
 package dev.vibeported.mc.e2e.mc
 
 import com.mojang.serialization.Codec
+import dev.vibeported.rpc.RpcSerializer
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ByteArraySerializer
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor as Descriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
-import kotlinx.serialization.modules.SerializersModule
 import net.minecraft.core.BlockPos
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.NbtIo
@@ -26,10 +26,10 @@ import java.io.DataOutputStream
  * becomes bytes, and the bytes ride inside the ordinary payload. CBOR carries a `ByteArray`
  * natively, which is why none of this has to be Base64'd to survive the trip.
  *
- * Adding a type is one line in [MinecraftSerializers]. Nothing about this class is specific to
- * positions.
+ * Adding a type is one `object` extending this and carrying [RpcSerializer]. Nothing about this
+ * class is specific to positions.
  */
-public class MojangCodecSerializer<T : Any>(
+public open class MojangCodecSerializer<T : Any>(
     name: String,
     private val codec: Codec<T>,
 ) : KSerializer<T> {
@@ -73,15 +73,14 @@ public class MojangCodecSerializer<T : Any>(
 }
 
 /**
- * The Minecraft types a body may send, and how.
+ * A position, which is what nearly every verb here sends.
  *
- * Handed to the wire format when a node is built. The compiler is told the same list by name --
- * `rpc { contextual.add(...) }` in this module's build script -- so a type that is not in both
- * places fails to compile rather than at the first call that sends one.
+ * The annotation is the whole registration. The compiler reads it, stops refusing `BlockPos` as an
+ * argument or a result, and writes the pair into this module's manifest; every node holding that
+ * jar assembles it into its wire format as it starts. There is nothing to add to a build script and
+ * nothing to register at startup, so the compiler and the runtime cannot end up disagreeing about
+ * whether a position can be sent.
  */
-public object MinecraftSerializers {
-
-    public val module: SerializersModule = SerializersModule {
-        contextual(BlockPos::class, MojangCodecSerializer("net.minecraft.core.BlockPos", BlockPos.CODEC))
-    }
-}
+@RpcSerializer(BlockPos::class)
+public object BlockPosSerializer :
+    MojangCodecSerializer<BlockPos>("net.minecraft.core.BlockPos", BlockPos.CODEC)

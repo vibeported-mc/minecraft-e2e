@@ -2,6 +2,7 @@
 
 package dev.vibeported.rpc.plugin.ir
 
+import dev.vibeported.rpc.plugin.SerializerIndex
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
@@ -77,13 +78,13 @@ internal class RpcTransformer(
     private val context: IrPluginContext,
     private val symbols: RpcSymbols,
     /**
-     * Types to resolve through the wire format's module rather than through their own class.
+     * Types something wrote a serializer for.
      *
      * Read by [serializerFor], which emits a `ContextualSerializer` for one of these instead of the
      * reflective `serializer(KClass, ...)` lookup that a class with no serializer of its own would
      * fail at.
      */
-    private val contextual: Set<String> = emptySet(),
+    private val serializers: SerializerIndex = SerializerIndex(),
 ) {
 
     fun transform(plan: FilePlan) {
@@ -431,7 +432,7 @@ internal class RpcTransformer(
      */
     private fun serializerFor(builder: IrBuilderWithScope, type: IrType): IrExpression = with(builder) {
         val named = type.classOrNull?.owner?.kotlinFqName?.asString()
-        val lookup = if (named in contextual) contextualSerializer(builder, type) else {
+        val lookup = if (named != null && serializers.covers(named)) contextualSerializer(builder, type) else {
             irCall(symbols.serializerOf).apply {
                 arguments[0] = classReference(builder, type)
                 arguments[1] = irCall(symbols.emptyList).apply {

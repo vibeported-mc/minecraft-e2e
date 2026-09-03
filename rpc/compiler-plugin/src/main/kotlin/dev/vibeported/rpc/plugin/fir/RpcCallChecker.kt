@@ -1,6 +1,7 @@
 package dev.vibeported.rpc.plugin.fir
 
 import dev.vibeported.rpc.plugin.RoleIndex
+import dev.vibeported.rpc.plugin.SerializerIndex
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.FirElement
@@ -30,8 +31,8 @@ import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
  */
 internal class RpcCallChecker(
     private val roles: RoleIndex,
-    /** Types this build supplies serializers for. @see RpcCommandLineProcessor.OPTION_CONTEXTUAL */
-    private val contextual: Set<String> = emptySet(),
+    /** Types something wrote a serializer for. @see dev.vibeported.rpc.RpcSerializer */
+    private val serializers: SerializerIndex = SerializerIndex(),
 ) : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Common) {
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
@@ -95,7 +96,7 @@ internal class RpcCallChecker(
     private fun checkSerializable(lambda: FirAnonymousFunction) {
         lambda.valueParameters.forEach { parameter ->
             val type = parameter.returnTypeRef.coneType
-            Serializability.refuse(type, context.session, contextual)?.let { why ->
+            Serializability.refuse(type, context.session, serializers)?.let { why ->
                 reporter.reportOn(
                     parameter.source ?: lambda.source,
                     RpcDiagnostics.UNSERIALIZABLE_TYPE,
@@ -107,7 +108,7 @@ internal class RpcCallChecker(
         }
 
         val result = lambda.returnTypeRef.coneType
-        Serializability.refuse(result, context.session, contextual)?.let { why ->
+        Serializability.refuse(result, context.session, serializers)?.let { why ->
             reporter.reportOn(
                 lambda.source,
                 RpcDiagnostics.UNSERIALIZABLE_TYPE,

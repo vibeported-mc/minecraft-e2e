@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import dev.vibeported.rpc.SerializerManifest
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.lang.reflect.InvocationTargetException
@@ -25,6 +26,24 @@ class WireTypesTest {
         import dev.vibeported.rpc.RpcScope
         import dev.vibeported.rpc.node
         import dev.vibeported.rpc.rpcCall
+    """.trimIndent()
+
+    /** A serializer for a type nobody owns, written the way a game would write one. */
+    private val fileSerializer = """
+        import dev.vibeported.rpc.RpcSerializer
+        import kotlinx.serialization.KSerializer
+        import kotlinx.serialization.descriptors.PrimitiveKind
+        import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+        import kotlinx.serialization.encoding.Decoder
+        import kotlinx.serialization.encoding.Encoder
+        import java.io.File
+
+        @RpcSerializer(File::class)
+        object FileSerializer : KSerializer<File> {
+            override val descriptor = PrimitiveSerialDescriptor("java.io.File", PrimitiveKind.STRING)
+            override fun serialize(encoder: Encoder, value: File) = encoder.encodeString(value.path)
+            override fun deserialize(decoder: Decoder) = File(decoder.decodeString())
+        }
     """.trimIndent()
 
     @Test
@@ -97,52 +116,85 @@ class WireTypesTest {
     }
 
     @Test
-    fun `a type the build supplies a serializer for is allowed`() {
+    fun `a type with a hand-written serializer is allowed`() {
         // The case a game needs: `java.io.File` stands in for a type from a library that will never
-        // be @Serializable, and that the build promises a serializer for instead.
-        val compilation = RpcCompilation(workingDir).apply { contextual = listOf("java.io.File") }
-        val result = compilation.compile(
-            "Sample.kt" to (
-                preamble + "\n\n" + """
-                import java.io.File
-
+        // be @Serializable. Somebody writes a serializer, marks it, and that is the whole
+        // registration -- no build script, and nothing to remember at startup.
+        val result = RpcCompilation(workingDir).compile(
+            "Sample.kt" to (preamble + "\n\n" + fileSerializer + "\n\n" + """
                 suspend fun where(who: String, file: File): File? =
                     rpcCall(node(who), file) { it }
-                """.trimIndent()
-                )
+                """.trimIndent())
         )
 
         assertTrue(result.succeeded, result.messages)
     }
 
     @Test
-    fun `more than one promised type is allowed, which a comma-joined list would not be`() {
-        // The option is passed once per type. A comma inside a `-P` value is how the Kotlin CLI
-        // separates one plugin option from the next, so a joined list arrives as a second option
-        // with no `plugin:` prefix -- and the compiler says only "Wrong plugin option format",
-        // naming neither the option nor the plugin. One type never showed it; two do.
-        val compilation = RpcCompilation(workingDir).apply {
-            contextual = listOf("java.io.File", "java.net.URI")
-        }
+    fun `what a compilation declares is written into its manifest`() {
+        // The half the compiler cannot check for itself. This file is what a module downstream
+        // reads to inherit the serializer, and what every node reads to assemble its wire format --
+        // so a serializer the compiler accepted but never published is a call that fails at run
+        // time with nothing having warned about it.
+        val compilation = RpcCompilation(workingDir)
         val result = compilation.compile(
-            "Sample.kt" to (
-                preamble + "\n\n" + """
+            "Sample.kt" to (preamble + "\n\n" + fileSerializer + "\n\n" + """
+                suspend fun where(who: String, file: File): File? =
+                    rpcCall(node(who), file) { it }
+                """.trimIndent())
+        )
+        assertTrue(result.succeeded, result.messages)
+
+        val manifest = SerializerManifest.parse(
+            File(compilation.manifestDir, SerializerManifest.RESOURCE).readText()
+        )
+
+        assertEquals(1, manifest.entries.size, manifest.toString())
+        assertEquals("java.io.File", manifest.entries.single().type)
+        assertEquals("FileSerializer", manifest.entries.single().serializer)
+    }
+
+    @Test
+    fun `two of them in one compilation are both allowed`() {
+        val result = RpcCompilation(workingDir).compile(
+            "Sample.kt" to """
+                import dev.vibeported.rpc.RpcSerializer
+                import dev.vibeported.rpc.node
+                import dev.vibeported.rpc.rpcCall
+                import kotlinx.serialization.KSerializer
+                import kotlinx.serialization.descriptors.PrimitiveKind
+                import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+                import kotlinx.serialization.encoding.Decoder
+                import kotlinx.serialization.encoding.Encoder
                 import java.io.File
                 import java.net.URI
+
+                @RpcSerializer(File::class)
+                object FileSerializer : KSerializer<File> {
+                    override val descriptor = PrimitiveSerialDescriptor("java.io.File", PrimitiveKind.STRING)
+                    override fun serialize(encoder: Encoder, value: File) = encoder.encodeString(value.path)
+                    override fun deserialize(decoder: Decoder) = File(decoder.decodeString())
+                }
+
+                @RpcSerializer(URI::class)
+                object UriSerializer : KSerializer<URI> {
+                    override val descriptor = PrimitiveSerialDescriptor("java.net.URI", PrimitiveKind.STRING)
+                    override fun serialize(encoder: Encoder, value: URI) = encoder.encodeString(value.toString())
+                    override fun deserialize(decoder: Decoder) = URI(decoder.decodeString())
+                }
 
                 suspend fun both(who: String, file: File, uri: URI): File =
                     rpcCall(node(who), file, uri) { f, _ -> f }
                 """.trimIndent()
-                )
         )
 
         assertTrue(result.succeeded, result.messages)
     }
 
     @Test
-    fun `the same type is still refused when the build did not promise one`() {
-        // The other half: naming a type in the option is what allows it, so a typo in that list is
-        // a compile error rather than a serializer that quietly is not there.
+    fun `the same type is still refused when nobody wrote a serializer`() {
+        // The other half: the annotation is what allows it, so forgetting one is a compile error
+        // rather than a serializer that quietly is not there.
         val result = RpcCompilation(workingDir).compile(
             "Sample.kt" to (
                 preamble + "\n\n" + """
@@ -154,7 +206,7 @@ class WireTypesTest {
                 )
         )
 
-        assertFalse(result.succeeded, "an unpromised library type must not compile")
+        assertFalse(result.succeeded, "a library type nobody serializes must not compile")
         assertTrue("'File'" in result.messages, result.messages)
     }
 }

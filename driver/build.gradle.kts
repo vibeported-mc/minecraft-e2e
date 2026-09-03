@@ -30,15 +30,6 @@ repositories {
     }
 }
 
-// The Mojang types a driver method may send. Neither will ever be `@Serializable` -- they are
-// Mojang's classes -- but both have a `Codec`, which is the same thing said differently, and
-// `MojangCodecSerializer` turns one into the other. A type not named here still has to be
-// serializable, and the compiler checks it.
-rpc {
-    contextual.add("net.minecraft.core.BlockPos")
-    contextual.add("net.minecraft.world.item.ItemStack")
-}
-
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
 

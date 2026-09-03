@@ -4,8 +4,6 @@ import dev.vibeported.mc.e2e.ClientStarter
 import dev.vibeported.mc.e2e.CurrentTest
 import dev.vibeported.mc.e2e.ORCHESTRATOR_NODE
 import dev.vibeported.mc.e2e.ORCHESTRATOR_ROLE
-import dev.vibeported.mc.e2e.mc.MinecraftSerializers
-import dev.vibeported.rpc.CborWireFormat
 import dev.vibeported.rpc.NodeId
 import dev.vibeported.rpc.Services
 import dev.vibeported.rpc.host.HubAddress
@@ -16,7 +14,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.json.Json
 import java.io.File
 import kotlin.system.exitProcess
@@ -90,7 +87,6 @@ public object OrchestratorBootstrap {
                 services = services,
                 // The test bodies run *here*, so this is the process that encodes a `BlockPos` on
                 // its way to the server. It needs the game's serializers as much as a game does.
-                format = CborWireFormat(Cbor { serializersModule = MinecraftSerializers.module }),
                 // This one is load-bearing and its absence is baffling. FancyModLoader loads mod
                 // classes in a transforming loader of its own; resolving tables through any other
                 // loader gets a *second* copy of every class in them, and a receiver registered

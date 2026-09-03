@@ -5,6 +5,7 @@ import dev.vibeported.rpc.plugin.ir.RpcIrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.cli.jvm.config.jvmClasspathRoots
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.messageCollector
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
@@ -23,17 +24,21 @@ public class RpcCompilerPluginRegistrar : CompilerPluginRegistrar() {
         // let two modules read each other's roles.
         val roles = RoleIndex()
 
+        // Seeded from the compile classpath, so a module inherits every serializer its
+        // dependencies declared with nothing to configure. This compilation's own are added
+        // lazily by the frontend, which is the only half that can see them.
+        //
         // Both halves need it: the frontend to stop refusing these types, the backend to emit a
         // lookup against the format's module rather than against the class.
-        val contextual = configuration.get(RpcCommandLineProcessor.KEY_CONTEXTUAL).orEmpty()
+        val serializers = SerializerIndex(configuration.jvmClasspathRoots)
 
-        FirExtensionRegistrarAdapter.registerExtension(RpcFirExtensionRegistrar(roles, contextual))
+        FirExtensionRegistrarAdapter.registerExtension(RpcFirExtensionRegistrar(roles, serializers))
         IrGenerationExtension.registerExtension(
             RpcIrGenerationExtension(
                 roles = roles,
                 manifestDir = configuration.get(RpcCommandLineProcessor.KEY_MANIFEST_DIR),
                 messages = configuration.messageCollector,
-                contextual = contextual,
+                serializers = serializers,
             )
         )
     }

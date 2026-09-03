@@ -3,7 +3,11 @@ package dev.vibeported.rpc.gradle
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+import org.gradle.api.file.Directory
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.SourceSet
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.SourceSetContainer
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
@@ -22,8 +26,6 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 public class RpcGradlePlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
-        val settings = project.extensions.create("rpc", RpcExtension::class.java)
-
         val compilerPlugin = project.configurations.create(COMPILER_PLUGIN) {
             it.isCanBeConsumed = false
             it.isCanBeResolved = true
@@ -34,7 +36,7 @@ public class RpcGradlePlugin : Plugin<Project> {
         // way a build script reads, and it should not be the reason a build fails.
         project.plugins.withId("org.jetbrains.kotlin.jvm") {
             project.extensions.getByType(SourceSetContainer::class.java).configureEach { sourceSet ->
-                wire(project, sourceSet, compilerPlugin, settings)
+                wire(project, sourceSet, compilerPlugin)
             }
         }
 
@@ -59,7 +61,6 @@ public class RpcGradlePlugin : Plugin<Project> {
         project: Project,
         sourceSet: SourceSet,
         compilerPlugin: Configuration,
-        settings: RpcExtension,
     ) {
         val compileTaskName = sourceSet.getCompileTaskName("kotlin")
         if (project.tasks.findByName(compileTaskName) == null) return
@@ -82,29 +83,55 @@ public class RpcGradlePlugin : Plugin<Project> {
             task.outputs.dir(manifestDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {
-                    val options = mutableListOf(
+                    listOf(
                         "-P", "plugin:$PLUGIN_ID:manifestDir=${manifestDir.get().asFile.absolutePath}",
                     )
-                    // One `-P` per type, never a comma-joined list. A comma inside a `-P` value is
-                    // how the Kotlin CLI separates one plugin option from the next, so a joined
-                    // list arrives as a second option with no `plugin:` prefix -- and the compiler
-                    // says only "Wrong plugin option format", naming neither the option nor us.
-                    settings.contextual.get().forEach { type ->
-                        options += "-P"
-                        options += "plugin:$PLUGIN_ID:contextual=$type"
-                    }
-                    options
                 }
             )
         }
 
         // The manifest is written by the compiler, so packaging resources has to wait for it.
         project.tasks.named(sourceSet.processResourcesTaskName).configure { it.dependsOn(compile) }
+
+        publishToClassesVariant(project, sourceSet, manifestDir, compile)
+    }
+
+    /**
+     * Puts the manifest on the compile classpath of everything downstream.
+     *
+     * A resource directory is enough to get it into the jar, and for a while that looked like the
+     * whole job -- until a consumer was handed this project's *class directories* instead of its
+     * jar, which is what Gradle's compile avoidance does and what a ModDevGradle project gets. Those
+     * directories hold no resources, so the plugin compiling downstream saw a dependency that had
+     * declared nothing, and refused a type it had a serializer for all along.
+     *
+     * So the manifest is published as another artifact of that same `classes` variant. Consumers
+     * taking the jar are unaffected; consumers taking directories now get one more.
+     */
+    private fun publishToClassesVariant(
+        project: Project,
+        sourceSet: SourceSet,
+        manifestDir: Provider<Directory>,
+        compile: TaskProvider<KotlinCompile>,
+    ) {
+        // `apiElements` exists for the main source set alone, which is also the only one anything
+        // can compile against.
+        if (sourceSet.name != SourceSet.MAIN_SOURCE_SET_NAME) return
+
+        project.configurations.named(sourceSet.apiElementsConfigurationName).configure { elements ->
+            elements.outgoing.variants.findByName(CLASSES)?.artifact(manifestDir) { artifact ->
+                artifact.type = ArtifactTypeDefinition.JVM_CLASS_DIRECTORY
+                artifact.builtBy(compile)
+            }
+        }
     }
 
     private companion object {
         /** Where a consuming build says which compiler plugin to use. */
         const val COMPILER_PLUGIN = "rpcCompilerPlugin"
+
+        /** Gradle's name for the secondary variant carrying class directories rather than a jar. */
+        const val CLASSES = "classes"
 
         /** Matches `RpcCommandLineProcessor.PLUGIN_ID`, which is what the compiler keys options by. */
         const val PLUGIN_ID = "dev.vibeported.rpc"

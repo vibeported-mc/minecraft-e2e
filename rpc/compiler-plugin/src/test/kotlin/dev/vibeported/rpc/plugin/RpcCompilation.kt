@@ -16,28 +16,18 @@ class RpcCompilation(private val workingDir: File) {
 
     val manifestDir: File = File(workingDir, "rpc-manifest").apply { mkdirs() }
 
-    /** Types this compilation promises a serializer for. @see RpcCommandLineProcessor.OPTION_CONTEXTUAL */
-    var contextual: List<String> = emptyList()
-
     fun compile(vararg files: Pair<String, String>): Result {
         val compilation = KotlinCompilation().apply {
             this.workingDir = this@RpcCompilation.workingDir
             sources = files.map { (name, code) -> SourceFile.kotlin(name, code) }
             compilerPluginRegistrars = listOf(RpcCompilerPluginRegistrar())
             commandLineProcessors = listOf(RpcCommandLineProcessor())
-            pluginOptions = listOfNotNull(
+            pluginOptions = listOf(
                 PluginOption(
                     pluginId = RpcCommandLineProcessor.PLUGIN_ID,
                     optionName = "manifestDir",
                     optionValue = manifestDir.absolutePath,
                 ),
-                contextual.takeIf { it.isNotEmpty() }?.let {
-                    PluginOption(
-                        pluginId = RpcCommandLineProcessor.PLUGIN_ID,
-                        optionName = "contextual",
-                        optionValue = it.joinToString(","),
-                    )
-                },
             )
             inheritClassPath = true
             messageOutputStream = System.out

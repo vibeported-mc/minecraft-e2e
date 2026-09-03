@@ -120,6 +120,34 @@ The guarantee that holds is narrower than "the classpath will catch it", and str
   `CallsKt.onlyOnB/0` needs role `B`, and a holds []. It cannot run this.
   ```
 
+## Sending a type nobody owns
+
+Everything a body takes or returns has to serialize, and the compiler says so under the cursor
+rather than at the first call. `@Serializable` covers what you write; the awkward case is a type
+from a library you cannot change — `BlockPos` will never carry the annotation, because it is
+Mojang's class.
+
+Write a serializer and mark it:
+
+```kotlin
+@RpcSerializer(BlockPos::class)
+object BlockPosSerializer : MojangCodecSerializer<BlockPos>(BlockPos.CODEC)
+```
+
+That is the whole registration. The compiler records the pair in a manifest beside the procedures;
+a module downstream reads it off its compile classpath and stops refusing the type with nothing in
+its build script saying so; and every node assembles the manifests it can see into the module its
+wire format consults, as it starts.
+
+**A serializer travels with the jar declaring it**, which is the same property as the tables and for
+the same reason. A node without part of the deployment assembles a wire format that has never heard
+of that part's types — so what a node can be sent follows from its classpath, not from a registry
+somebody has to keep in step with it. `DistTest` runs three processes with three classpaths to hold
+that down.
+
+The compiler and the runtime read the *same file*, so they cannot disagree: there is no way to have
+a build that compiles and a node that then cannot decode what arrived.
+
 ## What this does not do
 
 | | Pinned by |

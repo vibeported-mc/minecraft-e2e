@@ -2,7 +2,9 @@ package dev.vibeported.rpc.e2e.layer
 
 import dev.vibeported.rpc.RpcRole
 import dev.vibeported.rpc.e2e.a.Alpha
+import dev.vibeported.rpc.e2e.a.Ident
 import dev.vibeported.rpc.e2e.b.Beta
+import dev.vibeported.rpc.e2e.b.Tag
 import dev.vibeported.rpc.node
 import dev.vibeported.rpc.rpcCall
 
@@ -24,3 +26,17 @@ suspend fun anywhere(target: String): String = rpcCall(node(target)) { Alpha.cal
 
 suspend fun onlyOnB(target: String): String =
     rpcCall(node(target)) @RpcRole("B") { Alpha.callA() + "/" + Beta.callB() }
+
+/**
+ * The same split, in the values rather than the bodies.
+ *
+ * Neither `Ident` nor `Tag` is `@Serializable`; each is sendable because the module owning it
+ * declared a serializer with `@RpcSerializer` and published it in that module's manifest. This one
+ * is compiled against both halves and configured for neither, which is the point -- a serializer is
+ * inherited from the classpath exactly as a class is.
+ */
+suspend fun echoIdent(target: String, of: Ident): Ident =
+    rpcCall(node(target), of) { Ident(it.value + "-" + Alpha.callA()) }
+
+suspend fun echoTag(target: String, tag: Tag): Tag =
+    rpcCall(node(target), tag) @RpcRole("B") { Tag(it.name + Beta.callB(), it.level + 1) }

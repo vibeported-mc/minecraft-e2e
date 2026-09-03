@@ -22,12 +22,6 @@ repositories {
     }
 }
 
-// The verbs send positions across, so this module makes the same promise `:minecraft` does. The
-// serializer itself lives there; what is declared here is only that the compiler should allow it.
-rpc {
-    contextual.add("net.minecraft.core.BlockPos")
-}
-
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
 

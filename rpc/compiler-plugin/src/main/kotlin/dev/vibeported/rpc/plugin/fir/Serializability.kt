@@ -1,6 +1,7 @@
 package dev.vibeported.rpc.plugin.fir
 
 import org.jetbrains.kotlin.descriptors.ClassKind
+import dev.vibeported.rpc.plugin.SerializerIndex
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.hasAnnotation
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
@@ -40,18 +41,20 @@ internal object Serializability {
     fun refuse(
         type: ConeKotlinType,
         session: FirSession,
-        /** Types the build has promised a serializer for. @see isContextual */
-        contextual: Set<String> = emptySet(),
+        /** Types something wrote a serializer for. @see dev.vibeported.rpc.RpcSerializer */
+        serializers: SerializerIndex = SerializerIndex(),
     ): String? {
+        SerializerDiscovery.contribute(session, serializers)
+
         val name = type.classId?.asSingleFqName()?.asString()
             ?: return "it has no concrete class, so nothing can be resolved for it"
 
         if (name in BUILT_IN) return null
 
-        // The build says it supplies one. Checked here rather than trusted at run time: a type in
-        // this list still has to be *named*, so a typo is a compile error rather than a serializer
-        // that quietly is not there.
-        if (name in contextual) return null
+        // Something wrote a serializer for it -- in this compilation, or in a module on the
+        // classpath. Checked rather than assumed: the same manifest the compiler reads here is the
+        // one every node assembles its wire format from, so the two cannot disagree.
+        if (serializers.covers(name)) return null
 
         // A generic type erases to its class, and the serializer looked up from that class would
         // silently encode the wrong thing. Refusing is the honest answer until argument serializers

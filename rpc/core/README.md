@@ -28,6 +28,17 @@ framework was built to move to compile time.
 hands the real objects over. That is what makes it affordable to build a whole gameplay vocabulary
 out of these calls -- most of them are not going anywhere, and the ones that are pay alone.
 
+**A serializer is discovered, never registered.** `@RpcSerializer` on an object naming the type it
+covers is read by the compiler into a manifest, and `SerializerRegistry` assembles every manifest on
+a node's classpath into the `SerializersModule` its format consults. Two consequences worth stating:
+a module inherits its dependencies' serializers with nothing configured, and a node without a jar
+has never heard of that jar's types -- which is the same shape as the tables, deliberately.
+
+**Resolving serializers is eager, and resolving tables is not.** The opposite decisions, for the
+same reason: a table names classes a node may legitimately not have, so it is loaded only if a role
+asks for it; a serializer a node cannot resolve means a call that will fail at the moment it matters
+most, so it fails while starting instead.
+
 **CBOR is the default wire format.** Arguments are already `ByteArray` by the time they reach an
 envelope, and JSON would base64 every one of them. JSON stays available for when a human has to read
 a frame.

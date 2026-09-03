@@ -26,14 +26,6 @@ repositories {
     }
 }
 
-// The types a body may send that this build supplies the serializer for. A `BlockPos` is not
-// `@Serializable` and never will be, but it has a Mojang codec -- so the compiler is told the name
-// and `MinecraftSerializers` provides the serializer to match. Anything not named here still has to
-// be `@Serializable`, checked at compile time.
-rpc {
-    contextual.add("net.minecraft.core.BlockPos")
-}
-
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
 

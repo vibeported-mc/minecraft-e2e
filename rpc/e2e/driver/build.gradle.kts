@@ -32,12 +32,14 @@ val nodeB: Configuration = nodeClasspath("nodeB")
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
 
-    // The driver itself. It names the layer so it can write calls, and neither half of the game --
-    // which is the point: after the plugin has lifted the bodies out, the layer's own class no
-    // longer references `Alpha` or `Beta` at all, so a process can dispatch procedures it could
-    // never run.
+    // The driver itself. It names the layer so it can write calls, and holds both halves of the
+    // game for one reason only: a caller has to encode what it sends, and the serializer for a
+    // value lives in the jar declaring the type. It runs none of it -- the tables it resolves are
+    // empty -- so the dist split is still measured where it exists, on the two node processes.
     testImplementation(project(":rpc:e2e:layer"))
     testImplementation(project(":rpc:e2e:node"))
+    testImplementation(project(":rpc:e2e:part-a"))
+    testImplementation(project(":rpc:e2e:part-b"))
     testImplementation(libs.coroutines.test)
 
     nodeA(project(":rpc:e2e:node"))

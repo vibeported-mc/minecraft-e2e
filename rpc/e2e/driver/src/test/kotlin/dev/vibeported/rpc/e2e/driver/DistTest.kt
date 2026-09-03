@@ -4,7 +4,11 @@ import dev.vibeported.rpc.NodeId
 import dev.vibeported.rpc.ProcedureTable
 import dev.vibeported.rpc.TableRegistry
 import dev.vibeported.rpc.currentNode
+import dev.vibeported.rpc.e2e.a.Ident
+import dev.vibeported.rpc.e2e.b.Tag
 import dev.vibeported.rpc.e2e.layer.anywhere
+import dev.vibeported.rpc.e2e.layer.echoIdent
+import dev.vibeported.rpc.e2e.layer.echoTag
 import dev.vibeported.rpc.e2e.layer.onlyOnB
 import dev.vibeported.rpc.host.HubAddress
 import dev.vibeported.rpc.host.RpcHost
@@ -38,9 +42,14 @@ import java.util.concurrent.TimeUnit
  * common half; node `b` has both. Nothing tells node `a` to avoid the `B` table beyond its own
  * roles, and its jar contains that table's class file the whole time.
  *
- * The driver has neither half. After the plugin lifts the bodies out, the layer's own class
- * references neither `Alpha` nor `Beta`, so this process dispatches procedures it could not
- * possibly run -- which is what an orchestrator is.
+ * The driver resolves no tables at all, so it dispatches procedures it could not possibly run --
+ * which is what an orchestrator is. It does hold both halves, because a caller has to encode what
+ * it sends and a serializer ships in the jar declaring the type; what it never does is load a
+ * table.
+ *
+ * The values carry the same split. `Ident` comes from the common half and `Tag` from the other, and
+ * each is sendable only because its own module declared a serializer -- so node `a` assembles a
+ * wire format that has never heard of `Tag`, having never seen the jar that says how to write one.
  */
 @Timeout(value = 3, unit = TimeUnit.MINUTES)
 class DistTest {
@@ -64,8 +73,8 @@ class DistTest {
 
         // The dist split, observable from outside: the same layer jar, and a different number of
         // procedures resolved out of it, decided entirely by the roles each node was given.
-        assertEquals(1, a.procedures, "node a should hold only the table every node loads")
-        assertEquals(2, b.procedures, "node b should hold that one and the B table too")
+        assertEquals(2, a.procedures, "node a should hold only the table every node loads")
+        assertEquals(4, b.procedures, "node b should hold that one and the B table too")
 
         joinAsDriver()
         awaitRoster(3)
@@ -74,9 +83,27 @@ class DistTest {
         assertEquals("A", anywhere("a"))
         assertEquals("A", anywhere("b"))
 
-        // And the one only node b can, on node b. `Beta` is on no other classpath in this test,
-        // this process's included.
+        // And the one only node b can, on node b.
         assertEquals("A/AB", onlyOnB("b"))
+    }
+
+    @Test
+    fun `a value crosses because the module owning its type said how`() = runBlocking {
+        hub.start(scope)
+        start("a", roles = "", classpath = CLASSPATH_A)
+        start("b", roles = "B", classpath = CLASSPATH_B)
+        joinAsDriver()
+        awaitRoster(3)
+
+        // `Ident` is not `@Serializable` and nothing in any build script mentions it. It crosses
+        // because part-a declared a serializer beside the type, the layer inherited that from its
+        // compile classpath, and each of these three processes assembled it from the manifest in
+        // the jar. Three separately-built classpaths agreeing, with nothing configured anywhere.
+        assertEquals(Ident("x-A"), echoIdent("a", Ident("x")))
+        assertEquals(Ident("y-A"), echoIdent("b", Ident("y")))
+
+        // And a type from the half only node b has, on a body only node b can run.
+        assertEquals(Tag("tAB", 2), echoTag("b", Tag("t", 1)))
     }
 
     @Test
@@ -114,7 +141,7 @@ class DistTest {
             // never claims a role never loads its table, and refuses the call by name instead.
             hub.start(scope)
             val a = start("a", roles = "B", classpath = CLASSPATH_A)
-            assertEquals(2, a.procedures, "the B table loads here despite Beta being absent")
+            assertEquals(4, a.procedures, "the B table loads here despite Beta being absent")
 
             joinAsDriver()
             awaitRoster(2)
