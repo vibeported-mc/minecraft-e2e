@@ -1,5 +1,6 @@
 package dev.vibeported.rpc.plugin.ir
 
+import dev.vibeported.rpc.plugin.RoleIndex
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
@@ -11,14 +12,15 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
  * Lifting the bodies into those tables comes next; the plan and the manifest are what everything
  * after depends on, and are worth having correct on their own first.
  */
-public class RpcIrGenerationExtension(
+internal class RpcIrGenerationExtension(
+    private val roles: RoleIndex,
     private val manifestDir: String?,
     private val messages: MessageCollector,
 ) : IrGenerationExtension {
 
     override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
         val plans = moduleFragment.files
-            .map { file -> RpcPlanner(file).plan() }
+            .map { file -> RpcPlanner(file, roles).plan() }
             .filterNot { it.isEmpty() }
 
         if (plans.isEmpty()) return

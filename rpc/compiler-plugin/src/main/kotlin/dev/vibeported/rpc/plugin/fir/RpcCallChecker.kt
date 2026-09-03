@@ -27,7 +27,9 @@ import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
  * possibly run on the node it is being sent to. Catching that under the cursor is the whole reason
  * this plugin has a frontend half.
  */
-internal object RpcCallChecker : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Common) {
+internal class RpcCallChecker(
+    private val roles: RoleIndex,
+) : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Common) {
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
     override fun check(expression: FirFunctionCall) {
@@ -43,10 +45,16 @@ internal object RpcCallChecker : FirExpressionChecker<FirFunctionCall>(MppChecke
         // SOURCE retention, so the role is gone by the time a body is lifted into a table. Keyed by
         // the call rather than the lambda -- an annotated lambda begins at the annotation here and
         // at the brace there, so only the call site is spelled the same in both.
-        val file = context.containingFileSymbol?.fir?.sourceFile?.path
+        val containingFile = context.containingFileSymbol?.fir
+        val path = containingFile?.sourceFile?.path
         val offset = expression.source?.startOffset
-        if (file != null && offset != null) {
-            RoleIndex.record(file, offset, EntryPoints.roleOf(body, context))
+        if (containingFile != null && path != null && offset != null) {
+            roles.record(
+                packageName = containingFile.packageDirective.packageFqName.asString(),
+                filePath = path,
+                offset = offset,
+                role = EntryPoints.roleOf(body, context),
+            )
         }
 
         checkCaptures(body.anonymousFunction)

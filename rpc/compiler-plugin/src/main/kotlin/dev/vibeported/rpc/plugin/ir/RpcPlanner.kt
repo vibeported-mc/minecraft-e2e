@@ -23,7 +23,10 @@ import org.jetbrains.kotlin.name.FqName
  * whole file to assign stable ids, while rewriting needs every table to exist before a body nested
  * inside another can find its own lifted method.
  */
-internal class RpcPlanner(private val file: IrFile) {
+internal class RpcPlanner(
+    private val file: IrFile,
+    private val roles: RoleIndex,
+) {
 
     fun plan(): FilePlan {
         val plan = FilePlan(file, facadeName())
@@ -82,7 +85,11 @@ internal class RpcPlanner(private val file: IrFile) {
 
         plan.procedures += ProcedurePlan(
             id = "${plan.facade}.$enclosing/$ordinal",
-            role = RoleIndex.roleAt(file.fileEntry.name, call.startOffset),
+            role = roles.roleAt(
+                packageName = file.packageFqName.asString(),
+                filePath = file.fileEntry.name,
+                offset = call.startOffset,
+            ),
             call = call,
             lambda = lambda.function,
             argumentTypes = typeArguments.dropLast(1).map { it!! },
