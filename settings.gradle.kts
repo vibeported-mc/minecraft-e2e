@@ -36,6 +36,11 @@ include(
     ":example",
     ":compiler-plugin",
 
+    // The RPC framework the harness is built on, and which knows nothing about Minecraft. Kept in
+    // this build for the shared catalog and conventions; kept free of the game by never applying
+    // ModDevGradle to it, which `subprojects { }` does not do for anyone.
+    ":rpc:core",
+
     // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
     // the very headers it was built with, and the object-oriented layer over them. Ordinary
     // subprojects -- the Docker step is a task like any other, with the same up-to-date

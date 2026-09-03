@@ -1,0 +1,85 @@
+package dev.vibeported.rpc
+
+/**
+ * The tables this node is allowed to load, loaded.
+ *
+ * Eagerly, and that is deliberate: a body referencing a class this node's classpath lacks should
+ * bring the node down while it is starting, with the table and the role in the message, rather than
+ * halfway through a call that looked fine when it was written.
+ *
+ * Tables belonging to roles this node does not hold are never resolved. Their ids are still known,
+ * from the manifest, purely so that a call misrouted here can be answered with a reason.
+ */
+public class TableRegistry private constructor(
+    private val byProcedure: Map<String, ProcedureTable>,
+    private val manifest: ProcedureManifest,
+    private val roles: Set<Role>,
+) {
+
+    /** The table owning [procedure], or a failure that says why this node has not got it. */
+    public fun tableFor(procedure: String): ProcedureTable =
+        byProcedure[procedure] ?: error(explain(procedure))
+
+    public fun knows(procedure: String): Boolean = procedure in byProcedure
+
+    private fun explain(procedure: String): String {
+        val entry = manifest.entries.firstOrNull { it.id == procedure }
+            ?: return "No procedure `$procedure` on any classpath here. Was its module compiled " +
+                "with the RPC plugin?"
+
+        val owner = entry.role
+            ?: return "Procedure `$procedure` should have been loaded by every node, but was not. " +
+                "Its table `${entry.table}` is missing from this classpath."
+
+        return "Procedure `$procedure` belongs to role `$owner`; this node holds " +
+            "${roles.map { it.value }.sorted()}. It was routed to the wrong node."
+    }
+
+    public companion object {
+        /**
+         * Reads every manifest, then resolves only the tables [roles] permits.
+         *
+         * A table is instantiated through its `INSTANCE` field because the plugin emits it as a
+         * Kotlin `object`; there is nothing to construct and nothing to pass.
+         */
+        public fun load(
+            roles: Set<Role>,
+            loader: ClassLoader = TableRegistry::class.java.classLoader,
+        ): TableRegistry {
+            val manifest = ProcedureManifest.load(loader)
+            val wanted = manifest.entries.filter { it.role == null || Role(it.role) in roles }
+
+            val tables = HashMap<String, ProcedureTable>()
+            wanted.map { it.table }.distinct().forEach { className ->
+                val table = instantiate(className, loader, roles)
+                table.procedures.forEach { id -> tables[id] = table }
+            }
+
+            // A table that does not own what the manifest says it owns means the two were built at
+            // different times. Caught here rather than as a puzzling absence on the first call.
+            wanted.forEach { entry ->
+                if (entry.id !in tables) {
+                    error(
+                        "The manifest says `${entry.id}` lives in ${entry.table}, but that table " +
+                            "does not own it. The manifest and the compiled tables are out of step; " +
+                            "rebuild ${entry.module.ifEmpty { "the module that owns it" }}."
+                    )
+                }
+            }
+            return TableRegistry(tables, manifest, roles)
+        }
+
+        private fun instantiate(className: String, loader: ClassLoader, roles: Set<Role>): ProcedureTable =
+            try {
+                Class.forName(className, true, loader).getField("INSTANCE").get(null) as ProcedureTable
+            } catch (missing: NoClassDefFoundError) {
+                // The dist constraint, caught. Naming the class it could not reach is the whole
+                // value of failing here: it is nearly always a body annotated with the wrong role.
+                error(
+                    "Table `$className` cannot be loaded on a node holding " +
+                        "${roles.map { it.value }.sorted()}: it needs `${missing.message}`, which is " +
+                        "not on this classpath. Check the @RpcRole on the bodies in it."
+                )
+            }
+    }
+}
