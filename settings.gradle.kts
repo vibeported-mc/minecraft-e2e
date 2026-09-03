@@ -52,6 +52,14 @@ include(
     ":rpc:compiler-plugin",
     ":rpc:example",
 
+    // Three processes with three different classpaths, which is the only way to test the thing the
+    // roles exist for: a node that cannot load half the bodies in a jar it is holding.
+    ":rpc:e2e:host",
+    ":rpc:e2e:part-a",
+    ":rpc:e2e:part-b",
+    ":rpc:e2e:layer",
+    ":rpc:e2e:driver",
+
     // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
     // the very headers it was built with, and the object-oriented layer over them. Ordinary
     // subprojects -- the Docker step is a task like any other, with the same up-to-date

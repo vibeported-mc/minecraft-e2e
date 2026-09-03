@@ -3,12 +3,21 @@ package dev.vibeported.rpc
 /**
  * The tables this node is allowed to load, loaded.
  *
- * Eagerly, and that is deliberate: a body referencing a class this node's classpath lacks should
- * bring the node down while it is starting, with the table and the role in the message, rather than
- * halfway through a call that looked fine when it was written.
+ * Eagerly, so that a table class the manifest names and this classpath lacks brings the node down
+ * while it is starting rather than at some later call.
  *
- * Tables belonging to roles this node does not hold are never resolved. Their ids are still known,
- * from the manifest, purely so that a call misrouted here can be answered with a reason.
+ * That guarantee is narrower than it first looks, and the difference decides the whole design. The
+ * JVM resolves a class's own supertypes when it loads it, but not the classes named inside its
+ * method bodies -- those wait until the method runs. So a table whose *bodies* touch classes this
+ * node lacks loads perfectly well here and fails on the first call that needs them. Measured, not
+ * assumed: `Class.forName` on a table referencing an absent class returns an instance quite
+ * happily.
+ *
+ * Which is exactly why roles carry the weight rather than the classpath. A node that does not hold
+ * a role never resolves its table at all, so the misrouted call is refused by name, before anything
+ * is loaded -- and that refusal is a guarantee, where "the class was missing" would only have been
+ * a hope. A node that *claims* a role its jars cannot support is a lie the runtime cannot catch
+ * early, and fails on the call.
  */
 public class TableRegistry private constructor(
     private val byProcedure: Map<String, ProcedureTable>,
@@ -21,6 +30,15 @@ public class TableRegistry private constructor(
         byProcedure[procedure] ?: error(explain(procedure))
 
     public fun knows(procedure: String): Boolean = procedure in byProcedure
+
+    /**
+     * Everything this node actually resolved, which is not everything the manifest named.
+     *
+     * The difference between the two is the dist split made visible, and is worth a host being able
+     * to say out loud as it starts: a node holding no roles has fewer of these than one holding
+     * several, from exactly the same jars.
+     */
+    public fun procedures(): Set<String> = byProcedure.keys
 
     private fun explain(procedure: String): String {
         val entry = manifest.entries.firstOrNull { it.id == procedure }
