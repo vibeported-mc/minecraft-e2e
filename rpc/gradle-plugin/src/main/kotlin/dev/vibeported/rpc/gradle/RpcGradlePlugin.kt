@@ -80,6 +80,21 @@ public class RpcGradlePlugin : Plugin<Project> {
 
         val compile = project.tasks.named(compileTaskName, KotlinCompile::class.java)
         compile.configure { task ->
+            // A manifest describes a *module*; a compiler plugin sees only the round it runs in.
+            // Those are the same thing exactly when the round is the whole module, and incremental
+            // compilation is precisely the arrangement in which they are not: a round that
+            // recompiles one file rewrites the manifest with that file's procedures and nothing
+            // else. Measured, not feared -- thirteen entries became one after touching an unrelated
+            // file, and the jar that came out was quietly missing twelve procedures no node could
+            // then find. The frontend goes wrong the same way, refusing a type whose
+            // `@RpcSerializer` lives in a file this round did not compile.
+            //
+            // Reconstructing whole-module state from partial rounds is possible -- attribute every
+            // entry to a source file, merge, drop entries whose file is gone -- and it is a great
+            // deal of machinery whose failures look exactly like the one above. Compiling the
+            // module is cheaper and cannot be subtly wrong.
+            task.incremental = false
+
             task.outputs.dir(manifestDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {

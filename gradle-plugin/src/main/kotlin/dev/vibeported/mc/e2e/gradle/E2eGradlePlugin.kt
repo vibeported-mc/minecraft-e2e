@@ -156,6 +156,11 @@ class E2eGradlePlugin : Plugin<Project> {
 
         val compileSuites = project.tasks.named(suites.getCompileTaskName("kotlin"), KotlinCompile::class.java)
         compileSuites.configure { task ->
+            // Whole module or nothing. @see dev.vibeported.rpc.gradle.RpcGradlePlugin, which does
+            // the same for every module that applies it: an incremental round rewrites the manifest
+            // with only the files it recompiled, and the jar comes out missing procedures.
+            task.incremental = false
+
             task.outputs.dir(indexDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {
