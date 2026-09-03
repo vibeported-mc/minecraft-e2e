@@ -13,6 +13,7 @@ kotlin {
 dependencies {
     api(libs.coroutines.core)
     api(libs.serialization.json)
+    api(libs.serialization.cbor)
 
     testImplementation(libs.coroutines.test)
 }

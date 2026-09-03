@@ -1,7 +1,11 @@
+@file:OptIn(ExperimentalSerializationApi::class)
+
 package dev.vibeported.rpc
 
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationStrategy
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.json.Json
 
 /**
@@ -19,11 +23,28 @@ public interface WireFormat {
 }
 
 /**
- * The default: JSON, as UTF-8.
+ * The default: CBOR.
  *
- * Chosen for being readable in a log rather than for being small. A framework whose failures happen
- * across process boundaries is worth being able to read on the wire, and anything that outgrows it
- * can supply its own [WireFormat].
+ * Binary, and native to `ByteArray`, which is what keeps bytes as bytes the whole way down instead
+ * of being Base64'd to survive a text format. Readability on the wire is not worth paying for --
+ * what is worth reading is logged by name, long before anything is encoded.
+ */
+public class CborWireFormat(private val cbor: Cbor = Cbor) : WireFormat {
+
+    override fun <T> encode(serializer: SerializationStrategy<T>, value: T): ByteArray =
+        cbor.encodeToByteArray(serializer, value)
+
+    override fun <T> decode(deserializer: DeserializationStrategy<T>, bytes: ByteArray): T =
+        cbor.decodeFromByteArray(deserializer, bytes)
+
+    override fun toString(): String = "cbor"
+}
+
+/**
+ * JSON, for when a human has to read the payload after all.
+ *
+ * Kept because it is occasionally exactly what is wanted while debugging, not because anything
+ * defaults to it.
  */
 public class JsonWireFormat(private val json: Json = Json) : WireFormat {
 

@@ -36,6 +36,20 @@ public class TableRegistry private constructor(
     }
 
     public companion object {
+
+        /**
+         * A registry over tables that are already in hand.
+         *
+         * For embedding and for tests: no manifest, no classpath scan, nothing resolved by name.
+         * The role filtering that [load] performs has already happened by construction, because a
+         * caller holding a table has necessarily been able to load it.
+         */
+        public fun of(tables: List<ProcedureTable>, roles: Set<Role> = emptySet()): TableRegistry {
+            val byProcedure = HashMap<String, ProcedureTable>()
+            tables.forEach { table -> table.procedures.forEach { byProcedure[it] = table } }
+            return TableRegistry(byProcedure, ProcedureManifest(), roles)
+        }
+
         /**
          * Reads every manifest, then resolves only the tables [roles] permits.
          *

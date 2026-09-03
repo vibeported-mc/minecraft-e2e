@@ -16,7 +16,7 @@ public class RpcNode(
     public val tables: TableRegistry,
     public val membership: Membership,
     public val services: Services = Services(),
-    public val format: WireFormat = JsonWireFormat(),
+    public val format: WireFormat = CborWireFormat(),
     public val outbound: Outbound = Outbound.Isolated,
 ) : AbstractCoroutineContextElement(RpcNode) {
 

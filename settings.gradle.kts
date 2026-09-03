@@ -40,6 +40,7 @@ include(
     // this build for the shared catalog and conventions; kept free of the game by never applying
     // ModDevGradle to it, which `subprojects { }` does not do for anyone.
     ":rpc:core",
+    ":rpc:transport",
 
     // The capture stack: FFmpeg cross-built for Windows, the Panama bindings generated from
     // the very headers it was built with, and the object-oriented layer over them. Ordinary
