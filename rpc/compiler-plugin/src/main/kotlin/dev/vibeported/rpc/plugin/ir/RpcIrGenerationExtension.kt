@@ -16,6 +16,8 @@ internal class RpcIrGenerationExtension(
     private val roles: RoleIndex,
     private val manifestDir: String?,
     private val messages: MessageCollector,
+    /** Types whose serializer comes from the wire format's module rather than from their class. */
+    private val contextual: Set<String> = emptySet(),
 ) : IrGenerationExtension {
 
     override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
@@ -26,7 +28,7 @@ internal class RpcIrGenerationExtension(
         if (plans.isEmpty()) return
 
         val symbols = RpcSymbols(pluginContext)
-        val transformer = RpcTransformer(pluginContext, symbols)
+        val transformer = RpcTransformer(pluginContext, symbols, contextual)
         plans.forEach(transformer::transform)
 
         ManifestWriter(manifestDir, moduleFragment.name.asString().trim('<', '>'), messages).write(plans)

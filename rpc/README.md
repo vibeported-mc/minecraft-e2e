@@ -139,6 +139,7 @@ The guarantee that holds is narrower than "the classpath will catch it", and str
 | [`:rpc:transport`](transport/README.md) | Envelopes, framing, the star hub, in-memory and TCP, the membership replica |
 | [`:rpc:compiler-plugin`](compiler-plugin/README.md) | The K2 plugin: the frontend checker, and the IR pass that lifts bodies into tables |
 | [`:rpc:gradle-plugin`](gradle-plugin/README.md) | An included build. Wires the compiler plugin in and packages the manifest |
+| [`:rpc:host`](host/README.md) | Puts a node in a process: connect, resolve tables, announce, serve |
 | [`:rpc:testkit`](testkit/README.md) | A whole cluster in one JVM |
 | [`:rpc:example`](example/README.md) | A consumer: applying the plugin is enough |
 | [`rpc/e2e`](e2e/README.md) | Three processes with three different classpaths, which is the only way to test the dist split |

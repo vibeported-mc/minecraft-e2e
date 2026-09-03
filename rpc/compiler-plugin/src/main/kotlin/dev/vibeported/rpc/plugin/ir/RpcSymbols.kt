@@ -59,6 +59,25 @@ internal class RpcSymbols(private val context: IrPluginContext) {
         .referenceFunctions(CallableId(FqName("kotlinx.serialization"), Name.identifier("serializer")))
         .single { it.owner.parameters.size == 3 }
 
+    /**
+     * `ContextualSerializer(KClass<T>)`, for a type whose serializer the build supplies.
+     *
+     * The other half of the compile-time guarantee for types nobody here owns. `serializer(KClass)`
+     * asks the class for its own serializer and fails when it has none; this one defers to the wire
+     * format's `SerializersModule`, which is where a `BlockPos` serializer can be registered by the
+     * layer that knows what a `BlockPos` is.
+     */
+    val contextualSerializerConstructor: IrConstructorSymbol =
+        classOf(FqName("kotlinx.serialization"), "ContextualSerializer")
+            .constructors.single { it.owner.parameters.size == 1 }
+
+    /** `KSerializer<T>.nullable`, since a `ContextualSerializer` is not nullable of itself. */
+    val nullableSerializer: IrSimpleFunctionSymbol = context
+        .referenceProperties(CallableId(FqName("kotlinx.serialization.builtins"), Name.identifier("nullable")))
+        .single()
+        .owner.getter?.symbol
+        ?: error("rpc: kotlinx.serialization.builtins.nullable has no getter")
+
     val emptyList: IrSimpleFunctionSymbol = context
         .referenceFunctions(CallableId(FqName("kotlin.collections"), Name.identifier("emptyList")))
         .single()

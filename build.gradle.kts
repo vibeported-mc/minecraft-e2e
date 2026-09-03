@@ -23,7 +23,13 @@ val junitLauncher = libs.junit.platform.launcher
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")
 
-    group = rootProject.group
+    // A group of its own for the framework, which is load-bearing rather than tidy. Gradle
+    // substitutes a project dependency for whichever project publishes the same `group:name`, and
+    // picks one when two do -- `project(":rpc:host")` silently resolving to a different project
+    // surfaces as a circular dependency naming neither the cause nor the two projects involved.
+    // Two names still have to differ within a group; this stops `:core` and `:rpc:core`, and
+    // `:example` and `:rpc:example`, from being the same trap as soon as anything depends on them.
+    group = if (path == ":rpc" || path.startsWith(":rpc:")) "dev.vibeported.rpc" else rootProject.group
     version = rootProject.version
 
     // 21 rather than the installed 25: the runtime side is eventually loaded by Minecraft, and

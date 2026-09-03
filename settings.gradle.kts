@@ -49,12 +49,13 @@ include(
     ":rpc:core",
     ":rpc:transport",
     ":rpc:testkit",
+    ":rpc:host",
     ":rpc:compiler-plugin",
     ":rpc:example",
 
     // Three processes with three different classpaths, which is the only way to test the thing the
     // roles exist for: a node that cannot load half the bodies in a jar it is holding.
-    ":rpc:e2e:host",
+    ":rpc:e2e:node",
     ":rpc:e2e:part-a",
     ":rpc:e2e:part-b",
     ":rpc:e2e:layer",

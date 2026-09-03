@@ -11,10 +11,19 @@ import kotlinx.serialization.KSerializer
  * The plugin lifts a lambda written at such a parameter into a table and replaces it with a
  * [LiftedBody]. Anywhere else, the argument is passed along untouched -- which is what lets one
  * function take a body and hand it to another without either knowing about the plugin.
+ *
+ * [role] fixes which table bodies written here belong to, so a call can be *about* a kind of node
+ * without every call site saying so: a `client { }` that only a game client can run declares the
+ * role once, on this parameter, and reads unchanged at all thirty of its call sites. A `@RpcRole`
+ * on the lambda still wins, for the one body that is an exception.
+ *
+ * The role lives here rather than in a `@RpcRole` of its own because that annotation targets an
+ * expression, and Kotlin requires source retention for those -- which is exactly the retention that
+ * would leave it invisible to the module compiling the call.
  */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.BINARY)
-public annotation class RpcLift
+public annotation class RpcLift(public val role: String = "")
 
 /**
  * A body that has been lifted out of its call site, and everything needed to dispatch it.

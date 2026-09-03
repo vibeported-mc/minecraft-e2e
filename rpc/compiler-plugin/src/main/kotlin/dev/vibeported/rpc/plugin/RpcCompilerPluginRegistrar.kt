@@ -23,12 +23,17 @@ public class RpcCompilerPluginRegistrar : CompilerPluginRegistrar() {
         // let two modules read each other's roles.
         val roles = RoleIndex()
 
-        FirExtensionRegistrarAdapter.registerExtension(RpcFirExtensionRegistrar(roles))
+        // Both halves need it: the frontend to stop refusing these types, the backend to emit a
+        // lookup against the format's module rather than against the class.
+        val contextual = configuration.get(RpcCommandLineProcessor.KEY_CONTEXTUAL).orEmpty()
+
+        FirExtensionRegistrarAdapter.registerExtension(RpcFirExtensionRegistrar(roles, contextual))
         IrGenerationExtension.registerExtension(
             RpcIrGenerationExtension(
                 roles = roles,
                 manifestDir = configuration.get(RpcCommandLineProcessor.KEY_MANIFEST_DIR),
                 messages = configuration.messageCollector,
+                contextual = contextual,
             )
         )
     }

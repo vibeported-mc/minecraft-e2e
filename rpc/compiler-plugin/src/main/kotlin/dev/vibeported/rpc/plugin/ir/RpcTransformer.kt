@@ -43,11 +43,14 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.types.defaultType
+import org.jetbrains.kotlin.ir.types.isMarkedNullable
+import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.types.starProjectedType
 import org.jetbrains.kotlin.ir.types.typeWith
 import org.jetbrains.kotlin.ir.util.constructors
 import org.jetbrains.kotlin.ir.util.functions
+import org.jetbrains.kotlin.ir.util.kotlinFqName
 import org.jetbrains.kotlin.ir.util.patchDeclarationParents
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.ir.visitors.transformChildrenVoid
@@ -73,6 +76,14 @@ internal val RpcOrigin: IrDeclarationOrigin = IrDeclarationOrigin.GeneratedByPlu
 internal class RpcTransformer(
     private val context: IrPluginContext,
     private val symbols: RpcSymbols,
+    /**
+     * Types to resolve through the wire format's module rather than through their own class.
+     *
+     * Read by [serializerFor], which emits a `ContextualSerializer` for one of these instead of the
+     * reflective `serializer(KClass, ...)` lookup that a class with no serializer of its own would
+     * fail at.
+     */
+    private val contextual: Set<String> = emptySet(),
 ) {
 
     fun transform(plan: FilePlan) {
@@ -409,21 +420,48 @@ internal class RpcTransformer(
     }
 
     /**
-     * `serializer(T::class, emptyList(), false)`, cast to the serializer of that type.
+     * `serializer(T::class, emptyList(), isNullable)`, cast to the serializer of that type.
      *
      * Whether a serializer exists was settled before anything was emitted; this is only how the
      * generated code gets hold of it.
+     *
+     * The third argument is the one worth naming. A `KClass` says nothing about nullability, so
+     * passing `false` unconditionally -- which this did -- hands a `BlockPos?` a serializer that
+     * refuses null, and the failure arrives at the first call that actually returns one.
      */
     private fun serializerFor(builder: IrBuilderWithScope, type: IrType): IrExpression = with(builder) {
-        val lookup = irCall(symbols.serializerOf).apply {
-            arguments[0] = classReference(builder, type)
-            arguments[1] = irCall(symbols.emptyList).apply {
-                typeArguments[0] = symbols.kSerializer.starProjectedType
+        val named = type.classOrNull?.owner?.kotlinFqName?.asString()
+        val lookup = if (named in contextual) contextualSerializer(builder, type) else {
+            irCall(symbols.serializerOf).apply {
+                arguments[0] = classReference(builder, type)
+                arguments[1] = irCall(symbols.emptyList).apply {
+                    typeArguments[0] = symbols.kSerializer.starProjectedType
+                }
+                arguments[2] = irBoolean(type.isMarkedNullable())
             }
-            arguments[2] = irBoolean(false)
         }
         irAs(lookup, symbols.kSerializer.typeWith(type))
     }
+
+    /**
+     * `ContextualSerializer(T::class)`, made nullable when the type is.
+     *
+     * The nullability has to be applied here rather than asked for, because unlike the reflective
+     * lookup a `ContextualSerializer` has no nullable flag -- it is wrapped instead.
+     */
+    private fun contextualSerializer(builder: IrBuilderWithScope, type: IrType): IrExpression =
+        with(builder) {
+            val bare = type.makeNotNull()
+            val serializer = irCallConstructor(symbols.contextualSerializerConstructor, listOf(bare)).apply {
+                arguments[0] = classReference(builder, bare)
+            }
+            if (!type.isMarkedNullable()) return serializer
+
+            irCall(symbols.nullableSerializer).apply {
+                typeArguments[0] = bare
+                arguments[0] = serializer
+            }
+        }
 
     private fun listOfValues(
         builder: IrBuilderWithScope,

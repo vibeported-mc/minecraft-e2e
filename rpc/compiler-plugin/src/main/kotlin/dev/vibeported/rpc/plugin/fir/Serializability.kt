@@ -1,5 +1,6 @@
 package dev.vibeported.rpc.plugin.fir
 
+import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.hasAnnotation
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
@@ -36,11 +37,21 @@ internal object Serializability {
      * A refusal rather than a boolean, because the only useful thing to do with the answer is put
      * it in front of whoever wrote the type.
      */
-    fun refuse(type: ConeKotlinType, session: FirSession): String? {
+    fun refuse(
+        type: ConeKotlinType,
+        session: FirSession,
+        /** Types the build has promised a serializer for. @see isContextual */
+        contextual: Set<String> = emptySet(),
+    ): String? {
         val name = type.classId?.asSingleFqName()?.asString()
             ?: return "it has no concrete class, so nothing can be resolved for it"
 
         if (name in BUILT_IN) return null
+
+        // The build says it supplies one. Checked here rather than trusted at run time: a type in
+        // this list still has to be *named*, so a typo is a compile error rather than a serializer
+        // that quietly is not there.
+        if (name in contextual) return null
 
         // A generic type erases to its class, and the serializer looked up from that class would
         // silently encode the wrong thing. Refusing is the honest answer until argument serializers
@@ -53,6 +64,11 @@ internal object Serializability {
         val declaration = type.toRegularClassSymbol(session)
             ?: return "its declaration cannot be resolved here"
         if (declaration.hasAnnotation(SERIALIZABLE, session)) return null
+
+        // An enum needs no annotation: kotlinx synthesizes a serializer for one reflectively, from
+        // its entry names. Refusing it would be refusing something that demonstrably works, and
+        // would push every enum crossing a wire into a wrapper for no reason at all.
+        if (declaration.classKind == ClassKind.ENUM_CLASS) return null
 
         return "it is neither a primitive nor annotated @Serializable, so kotlinx has no " +
             "serializer for it. Annotate the class, or pass something that already is serializable"

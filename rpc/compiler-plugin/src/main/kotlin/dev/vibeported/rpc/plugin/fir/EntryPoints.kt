@@ -15,6 +15,7 @@ import org.jetbrains.kotlin.fir.types.classId
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
+import org.jetbrains.kotlin.name.Name
 
 /**
  * Finding the places a procedure body is written.
@@ -32,12 +33,18 @@ internal object EntryPoints {
         .map { ClassId.topLevel(FqName("dev.vibeported.rpc.RpcBody$it")) }
         .toSet()
 
+    /** An argument written at a body parameter, kept with the parameter that declared it. */
+    class Lifted(val body: FirExpression, val parameter: FirValueParameterSymbol)
+
     /** Every argument written at a parameter that takes a body. */
-    fun liftedArguments(expression: FirFunctionCall): List<FirExpression> =
+    fun liftedArguments(expression: FirFunctionCall): List<Lifted> =
         expression.resolvedArgumentMapping
             ?.entries
-            ?.filter { (_, parameter) -> parameter.symbol.annotations.any { it.classId() == LIFT } }
-            ?.map { it.key }
+            ?.mapNotNull { (argument, parameter) ->
+                val symbol = parameter.symbol
+                symbol.takeIf { it.annotations.any { annotation -> annotation.classId() == LIFT } }
+                    ?.let { Lifted(argument, it) }
+            }
             .orEmpty()
 
     /**
@@ -83,16 +90,26 @@ internal object EntryPoints {
     }
 
     /**
-     * Which table this body belongs in: what the lambda says, else the file.
+     * Which table this body belongs in: what the lambda says, else the parameter, else the file.
      *
-     * A function-level annotation would sit between the two and is not read; the file and the call
-     * cover what a dist split needs, and a third place to look is a third place to explain.
+     * Three places, in the order of how specific they are. The lambda is the exception written at
+     * one call site; the parameter is what a call like `client { }` fixes for every body handed to
+     * it; the file is the default for everything in it. A function-level annotation would be a
+     * fourth place to look and is deliberately not read.
      */
-    fun roleOf(body: FirExpression?, context: CheckerContext): String? {
-        val onLambda = (body as? FirAnonymousFunctionExpression)?.let { lambda ->
+    fun roleOf(lifted: Lifted?, context: CheckerContext): String? {
+        val onLambda = (lifted?.body as? FirAnonymousFunctionExpression)?.let { lambda ->
             roleIn(lambda.annotations) ?: roleIn(lambda.anonymousFunction.annotations)
         }
-        return onLambda ?: context.containingFileSymbol?.annotations?.let { roleIn(it) }
+        val onParameter = lifted?.parameter?.let(::roleOfParameter)
+        return onLambda ?: onParameter ?: context.containingFileSymbol?.annotations?.let { roleIn(it) }
+    }
+
+    /** The `role` given to the `@RpcLift` on a body parameter, or null when it was left empty. */
+    private fun roleOfParameter(parameter: FirValueParameterSymbol): String? {
+        val annotation = parameter.annotations.firstOrNull { it.classId() == LIFT } ?: return null
+        val argument = annotation.argumentMapping.mapping[Name.identifier("role")]
+        return ((argument as? FirLiteralExpression)?.value as? String)?.takeIf { it.isNotEmpty() }
     }
 
     fun roleIn(annotations: List<FirAnnotation>): String? {

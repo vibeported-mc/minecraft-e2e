@@ -30,6 +30,8 @@ import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
  */
 internal class RpcCallChecker(
     private val roles: RoleIndex,
+    /** Types this build supplies serializers for. @see RpcCommandLineProcessor.OPTION_CONTEXTUAL */
+    private val contextual: Set<String> = emptySet(),
 ) : FirExpressionChecker<FirFunctionCall>(MppCheckerKind.Common) {
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
@@ -42,21 +44,25 @@ internal class RpcCallChecker(
             reporter.reportOn(expression.source, RpcDiagnostics.BODY_INVOKED_LOCALLY)
         }
 
-        EntryPoints.liftedArguments(expression).forEach { body ->
-            val lambda = EntryPoints.asLambda(body)
+        EntryPoints.liftedArguments(expression).forEach { lifted ->
+            val lambda = EntryPoints.asLambda(lifted.body)
             when {
-                lambda != null -> lift(expression, lambda)
+                lambda != null -> lift(expression, lambda, lifted)
 
                 // A body being passed along, which is exactly how a chain of calls is meant to work.
-                EntryPoints.isForwardedBody(body) -> Unit
+                EntryPoints.isForwardedBody(lifted.body) -> Unit
 
-                else -> reporter.reportOn(body.source, RpcDiagnostics.BODY_NOT_LITERAL)
+                else -> reporter.reportOn(lifted.body.source, RpcDiagnostics.BODY_NOT_LITERAL)
             }
         }
     }
 
     context(context: CheckerContext, reporter: DiagnosticReporter)
-    private fun lift(call: FirFunctionCall, body: FirAnonymousFunctionExpression) {
+    private fun lift(
+        call: FirFunctionCall,
+        body: FirAnonymousFunctionExpression,
+        lifted: EntryPoints.Lifted,
+    ) {
         // Written down for the backend, which cannot see the annotation: an expression target forces
         // SOURCE retention, so the role is gone by the time a body is lifted into a table. Keyed by
         // the call rather than the lambda -- an annotated lambda begins at the annotation here and
@@ -69,7 +75,7 @@ internal class RpcCallChecker(
                 packageName = containingFile.packageDirective.packageFqName.asString(),
                 filePath = path,
                 offset = offset,
-                role = EntryPoints.roleOf(body, context),
+                role = EntryPoints.roleOf(EntryPoints.Lifted(body, lifted.parameter), context),
             )
         }
 
@@ -89,7 +95,7 @@ internal class RpcCallChecker(
     private fun checkSerializable(lambda: FirAnonymousFunction) {
         lambda.valueParameters.forEach { parameter ->
             val type = parameter.returnTypeRef.coneType
-            Serializability.refuse(type, context.session)?.let { why ->
+            Serializability.refuse(type, context.session, contextual)?.let { why ->
                 reporter.reportOn(
                     parameter.source ?: lambda.source,
                     RpcDiagnostics.UNSERIALIZABLE_TYPE,
@@ -101,7 +107,7 @@ internal class RpcCallChecker(
         }
 
         val result = lambda.returnTypeRef.coneType
-        Serializability.refuse(result, context.session)?.let { why ->
+        Serializability.refuse(result, context.session, contextual)?.let { why ->
             reporter.reportOn(
                 lambda.source,
                 RpcDiagnostics.UNSERIALIZABLE_TYPE,

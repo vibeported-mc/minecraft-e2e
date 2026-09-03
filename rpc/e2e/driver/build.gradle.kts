@@ -37,14 +37,14 @@ dependencies {
     // longer references `Alpha` or `Beta` at all, so a process can dispatch procedures it could
     // never run.
     testImplementation(project(":rpc:e2e:layer"))
-    testImplementation(project(":rpc:e2e:host"))
+    testImplementation(project(":rpc:e2e:node"))
     testImplementation(libs.coroutines.test)
 
-    nodeA(project(":rpc:e2e:host"))
+    nodeA(project(":rpc:e2e:node"))
     nodeA(project(":rpc:e2e:layer"))
     nodeA(project(":rpc:e2e:part-a"))
 
-    nodeB(project(":rpc:e2e:host"))
+    nodeB(project(":rpc:e2e:node"))
     nodeB(project(":rpc:e2e:layer"))
     nodeB(project(":rpc:e2e:part-a"))
     nodeB(project(":rpc:e2e:part-b"))

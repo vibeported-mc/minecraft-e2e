@@ -15,7 +15,7 @@ classpaths genuinely differ.
 | `part-a` | Stands in for the common half of a game. On every node |
 | `part-b` | Stands in for the half only some nodes have. `Beta.callB()` calls into `part-a` |
 | `layer` | The mod jar: writes `rpcCall(...) { Alpha.callA() }` and `rpcCall(...) @RpcRole("B") { ... Beta.callB() }`. Depends on both halves `compileOnly`, and bundles neither -- which is what a mod jar does with a game |
-| `host` | A node in a process of its own. Told `-Drpc.node`, `-Drpc.roles` and `-Drpc.hub=host:port`; prints `rpc.ready` when it has joined |
+| `node` | A runnable node, over [`:rpc:host`](../host/README.md). Told `-Drpc.node`, `-Drpc.roles` and `-Drpc.hub=host:port`; prints `rpc.ready` when it has joined |
 | `driver` | The supervisor and the assertions: hosts the hub, forks the nodes, and calls |
 
 The same `layer` jar goes to both nodes. Node `a` gets `part-a`; node `b` gets both. The driver gets
@@ -23,8 +23,8 @@ The same `layer` jar goes to both nodes. Node `a` gets `part-a`; node `b` gets b
 references nothing from either half.
 
 ```
-node a    host + layer + part-a              roles: {}     resolves 1 procedure
-node b    host + layer + part-a + part-b     roles: {B}    resolves 2
+node a    node + layer + part-a              roles: {}     resolves 1 procedure
+node b    node + layer + part-a + part-b     roles: {B}    resolves 2
 driver    layer, and neither half            roles: {}     serves nothing; calls both
 ```
 
@@ -53,7 +53,7 @@ cannot check; what protects a dist-cleaned node is never claiming the role in th
 
 ```
 java -Drpc.node=b -Drpc.roles=B -Drpc.hub=127.0.0.1:5000 -cp "$(cat classpath-b.txt)" \
-    dev.vibeported.rpc.host.MainKt
+    dev.vibeported.rpc.e2e.node.MainKt
 ```
 
 A three-process test that can only be debugged from inside Gradle is a test nobody debugs.

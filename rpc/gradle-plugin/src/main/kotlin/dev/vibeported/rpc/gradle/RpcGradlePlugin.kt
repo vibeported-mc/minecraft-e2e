@@ -22,6 +22,8 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 public class RpcGradlePlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
+        val settings = project.extensions.create("rpc", RpcExtension::class.java)
+
         val compilerPlugin = project.configurations.create(COMPILER_PLUGIN) {
             it.isCanBeConsumed = false
             it.isCanBeResolved = true
@@ -32,7 +34,7 @@ public class RpcGradlePlugin : Plugin<Project> {
         // way a build script reads, and it should not be the reason a build fails.
         project.plugins.withId("org.jetbrains.kotlin.jvm") {
             project.extensions.getByType(SourceSetContainer::class.java).configureEach { sourceSet ->
-                wire(project, sourceSet, compilerPlugin)
+                wire(project, sourceSet, compilerPlugin, settings)
             }
         }
 
@@ -53,7 +55,12 @@ public class RpcGradlePlugin : Plugin<Project> {
         }
     }
 
-    private fun wire(project: Project, sourceSet: SourceSet, compilerPlugin: Configuration) {
+    private fun wire(
+        project: Project,
+        sourceSet: SourceSet,
+        compilerPlugin: Configuration,
+        settings: RpcExtension,
+    ) {
         val compileTaskName = sourceSet.getCompileTaskName("kotlin")
         if (project.tasks.findByName(compileTaskName) == null) return
 
@@ -75,7 +82,15 @@ public class RpcGradlePlugin : Plugin<Project> {
             task.outputs.dir(manifestDir)
             task.compilerOptions.freeCompilerArgs.addAll(
                 project.provider {
-                    listOf("-P", "plugin:$PLUGIN_ID:manifestDir=${manifestDir.get().asFile.absolutePath}")
+                    val options = mutableListOf(
+                        "-P", "plugin:$PLUGIN_ID:manifestDir=${manifestDir.get().asFile.absolutePath}",
+                    )
+                    val contextual = settings.contextual.get()
+                    if (contextual.isNotEmpty()) {
+                        options += "-P"
+                        options += "plugin:$PLUGIN_ID:contextual=${contextual.joinToString(",")}"
+                    }
+                    options
                 }
             )
         }

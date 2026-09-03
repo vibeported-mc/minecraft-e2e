@@ -7,7 +7,7 @@ import dev.vibeported.rpc.currentNode
 import dev.vibeported.rpc.e2e.layer.anywhere
 import dev.vibeported.rpc.e2e.layer.onlyOnB
 import dev.vibeported.rpc.host.HubAddress
-import dev.vibeported.rpc.host.NodeHost
+import dev.vibeported.rpc.host.RpcHost
 import dev.vibeported.rpc.transport.SocketHub
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -158,7 +158,7 @@ class DistTest {
             "-Drpc.hub=127.0.0.1:$hubPort",
             "-cp",
             classpath,
-            "dev.vibeported.rpc.host.MainKt",
+            "dev.vibeported.rpc.e2e.node.MainKt",
         ).redirectErrorStream(true).start()
 
     /**
@@ -224,12 +224,10 @@ class DistTest {
      * very first one.
      */
     private suspend fun joinAsDriver() {
-        NodeHost.join(
-            scope = scope,
+        RpcHost(
             id = NodeId("driver"),
-            hub = HubAddress("127.0.0.1", hub.port),
             tables = TableRegistry.of(emptyList<ProcedureTable>()),
-        )
+        ).connect(scope, HubAddress("127.0.0.1", hub.port))
     }
 
     private suspend fun awaitRoster(size: Int) {
