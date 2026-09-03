@@ -29,7 +29,7 @@ class ClusterTest {
         /** Set when anything is serialized, which is how the local path proves it took a shortcut. */
         var serialized = false
 
-        override val procedures = setOf("echo")
+        override fun procedures() = setOf("echo")
 
         override suspend fun invoke(procedure: String, services: Services, args: List<Any?>): Any? =
             "echo:" + args.single()

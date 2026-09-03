@@ -23,7 +23,7 @@ class FanOutTest {
     class Label(val text: String)
 
     class ReportTable(private val unwell: Boolean = false) : ProcedureTable {
-        override val procedures = setOf("report")
+        override fun procedures() = setOf("report")
 
         override suspend fun invoke(procedure: String, services: Services, args: List<Any?>): Any? {
             if (unwell) error("this node is unwell")

@@ -22,6 +22,15 @@ public class RpcNode(
     public val outbound: Outbound = Outbound.Isolated,
 ) : AbstractCoroutineContextElement(RpcNode) {
 
+    init {
+        // The receiver a body written against the plain entry points expects. Provided here so that
+        // the simplest possible call works with no wiring at all; a layer wanting something richer
+        // provides its own type and its bodies ask for that instead.
+        if (services.resolveOrNull(RpcScope::class) == null) {
+            services.provide(RpcScope::class) { NodeScope(info, services) }
+        }
+    }
+
     public val id: NodeId get() = info.id
     public val roles: Set<Role> get() = info.roles
 

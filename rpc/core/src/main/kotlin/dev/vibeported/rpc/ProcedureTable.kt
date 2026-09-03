@@ -20,9 +20,10 @@ public interface ProcedureTable {
      * Every id this table owns.
      *
      * Declared rather than inferred so a node can check the manifest it read against the tables it
-     * loaded, and say so when a stale build leaves them disagreeing.
+     * loaded, and say so when a stale build leaves them disagreeing. A function rather than a
+     * property because the compiler plugin emits it, and emitting a getter costs more than it buys.
      */
-    public val procedures: Set<String>
+    public fun procedures(): Set<String>
 
     /**
      * Runs one body against the services of the node it landed on.
@@ -43,3 +44,16 @@ public interface ProcedureTable {
 /** Thrown when a table is handed an id it does not own. */
 public class NoSuchProcedureException(public val procedure: String) :
     RuntimeException("No procedure `$procedure` in this table")
+
+/**
+ * Scaffolding, called by generated code where serializer resolution has not landed yet.
+ *
+ * Here rather than as a raw `throw` in the plugin so that the message lives with the runtime it
+ * describes, and so that deleting it later is a single obvious edit.
+ */
+@PluginGenerated
+public fun serializationNotGenerated(procedure: String, half: String): Nothing =
+    throw UnsupportedOperationException(
+        "rpc: `$half` is not generated yet, so `$procedure` cannot cross a node boundary. " +
+            "Calls on the node that owns the body work; calls from another node do not."
+    )

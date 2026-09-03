@@ -34,7 +34,7 @@ class ReliabilityTest {
         @Volatile
         var cancelledRemotely = false
 
-        override val procedures = setOf("hang")
+        override fun procedures() = setOf("hang")
 
         override suspend fun invoke(procedure: String, services: Services, args: List<Any?>): Any? {
             started.complete(Unit)

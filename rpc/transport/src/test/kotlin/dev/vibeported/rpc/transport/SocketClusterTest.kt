@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test
 class SocketClusterTest {
 
     class EchoTable : ProcedureTable {
-        override val procedures = setOf("echo")
+        override fun procedures() = setOf("echo")
 
         override suspend fun invoke(procedure: String, services: Services, args: List<Any?>): Any? =
             "echo:" + args.single()

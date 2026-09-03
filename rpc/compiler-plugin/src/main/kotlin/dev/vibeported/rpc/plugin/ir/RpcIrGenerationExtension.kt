@@ -25,6 +25,10 @@ internal class RpcIrGenerationExtension(
 
         if (plans.isEmpty()) return
 
+        val symbols = RpcSymbols(pluginContext)
+        val transformer = RpcTransformer(pluginContext, symbols)
+        plans.forEach(transformer::transform)
+
         ManifestWriter(manifestDir, moduleFragment.name.asString().trim('<', '>'), messages).write(plans)
     }
 }

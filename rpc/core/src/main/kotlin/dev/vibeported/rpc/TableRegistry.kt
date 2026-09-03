@@ -46,7 +46,7 @@ public class TableRegistry private constructor(
          */
         public fun of(tables: List<ProcedureTable>, roles: Set<Role> = emptySet()): TableRegistry {
             val byProcedure = HashMap<String, ProcedureTable>()
-            tables.forEach { table -> table.procedures.forEach { byProcedure[it] = table } }
+            tables.forEach { table -> table.procedures().forEach { byProcedure[it] = table } }
             return TableRegistry(byProcedure, ProcedureManifest(), roles)
         }
 
@@ -66,7 +66,7 @@ public class TableRegistry private constructor(
             val tables = HashMap<String, ProcedureTable>()
             wanted.map { it.table }.distinct().forEach { className ->
                 val table = instantiate(className, loader, roles)
-                table.procedures.forEach { id -> tables[id] = table }
+                table.procedures().forEach { id -> tables[id] = table }
             }
 
             // A table that does not own what the manifest says it owns means the two were built at
