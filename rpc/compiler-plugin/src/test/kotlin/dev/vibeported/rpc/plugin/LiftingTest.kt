@@ -4,8 +4,10 @@ import dev.vibeported.rpc.NodeId
 import dev.vibeported.rpc.NodeInfo
 import dev.vibeported.rpc.ProcedureTable
 import dev.vibeported.rpc.RpcScope
+import dev.vibeported.rpc.CborWireFormat
 import dev.vibeported.rpc.Services
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.builtins.serializer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,6 +72,41 @@ class LiftingTest {
             override val services get() = services
         })
         return services
+    }
+
+    @Test
+    fun `arguments and results survive a round trip through the table`() {
+        val result = RpcCompilation(workingDir).compile(
+            "Wire.kt" to """
+                import dev.vibeported.rpc.node
+                import dev.vibeported.rpc.rpcCall
+
+                suspend fun caller() {
+                    rpcCall(node("a"), "hello", 3) { text, times -> text.repeat(times) }
+                }
+            """.trimIndent()
+        )
+        assertTrue(result.succeeded, result.messages)
+
+        val table = result.classLoader
+            .loadClass("WireKt_Rpc")
+            .getField("INSTANCE")
+            .get(null) as ProcedureTable
+
+        val id = "WireKt.caller/0"
+        val format = CborWireFormat()
+
+        // Exactly the path a call from another node takes: bytes in, objects out, run, bytes back.
+        val encodedArgs = listOf(
+            format.encode(String.serializer(), "hello"),
+            format.encode(Int.serializer(), 3),
+        )
+        val decoded = table.decodeArgs(id, encodedArgs, format)
+        assertEquals(listOf("hello", 3), decoded)
+
+        val answer = runBlocking { table.invoke(id, servicesOfferingAScope(), decoded) }
+        val encoded = table.encodeResult(id, answer, format)!!
+        assertEquals("hellohellohello", format.decode(String.serializer(), encoded))
     }
 
     @Test

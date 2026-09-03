@@ -46,6 +46,30 @@ internal class RpcSymbols(private val context: IrPluginContext) {
     val listGet: IrSimpleFunctionSymbol = context.irBuiltIns.listClass.functions
         .single { it.owner.name.asString() == "get" }
 
+    val kSerializer: IrClassSymbol = classOf(FqName("kotlinx.serialization"), "KSerializer")
+
+    /**
+     * `serializer(KClass, List<KSerializer<*>>, Boolean): KSerializer<Any?>`.
+     *
+     * A lookup by class rather than a statically bound serializer. Whether one *exists* is settled
+     * at compile time, which is the guarantee that matters; how it is obtained at run time is an
+     * implementation detail, and this needs no per-type code emitted for it.
+     */
+    val serializerOf: IrSimpleFunctionSymbol = context
+        .referenceFunctions(CallableId(FqName("kotlinx.serialization"), Name.identifier("serializer")))
+        .single { it.owner.parameters.size == 3 }
+
+    val emptyList: IrSimpleFunctionSymbol = context
+        .referenceFunctions(CallableId(FqName("kotlin.collections"), Name.identifier("emptyList")))
+        .single()
+
+    val listOf: IrSimpleFunctionSymbol = context
+        .referenceFunctions(CallableId(FqName("kotlin.collections"), Name.identifier("listOf")))
+        .single { it.owner.parameters.size == 1 && it.owner.parameters.single().varargElementType != null }
+
+    val encode: IrSimpleFunctionSymbol = wireFormat.functions.single { it.owner.name.asString() == "encode" }
+    val decode: IrSimpleFunctionSymbol = wireFormat.functions.single { it.owner.name.asString() == "decode" }
+
     /** Called by the halves that are scaffolding until serializer resolution lands. */
     val notGenerated: IrSimpleFunctionSymbol = context
         .referenceFunctions(CallableId(CORE, Name.identifier("serializationNotGenerated")))

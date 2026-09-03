@@ -16,6 +16,7 @@ import org.jetbrains.kotlin.ir.builders.declarations.buildClass
 import org.jetbrains.kotlin.ir.builders.declarations.buildReceiverParameter
 import org.jetbrains.kotlin.ir.builders.irAs
 import org.jetbrains.kotlin.ir.builders.irBlockBody
+import org.jetbrains.kotlin.ir.builders.irBoolean
 import org.jetbrains.kotlin.ir.builders.irCall
 import org.jetbrains.kotlin.ir.builders.irCallConstructor
 import org.jetbrains.kotlin.ir.builders.irDelegatingConstructorCall
@@ -23,6 +24,7 @@ import org.jetbrains.kotlin.ir.builders.irEquals
 import org.jetbrains.kotlin.ir.builders.irGet
 import org.jetbrains.kotlin.ir.builders.irIfThen
 import org.jetbrains.kotlin.ir.builders.irInt
+import org.jetbrains.kotlin.ir.builders.irNull
 import org.jetbrains.kotlin.ir.builders.irReturn
 import org.jetbrains.kotlin.ir.builders.irString
 import org.jetbrains.kotlin.ir.declarations.IrClass
@@ -85,8 +87,8 @@ internal class RpcTransformer(
 
             buildProcedures(table, procedures)
             buildInvoke(table, plan, role, procedures, methods)
-            buildNotGeneratedYet(table, "decodeArgs", listType(context.irBuiltIns.anyNType))
-            buildNotGeneratedYet(table, "encodeResult", context.irBuiltIns.byteArray.defaultType.makeNullable())
+            buildDecodeArgs(table, procedures)
+            buildEncodeResult(table, procedures)
 
             plan.file.declarations += table
         }
@@ -240,37 +242,75 @@ internal class RpcTransformer(
     }
 
     /**
-     * Scaffolding: the two halves of serialization, until serializer resolution lands.
+     * `decodeArgs(procedure, args, format)`: what arrived over the wire, as the objects it was.
      *
-     * Emitted as a throw rather than left out, because a table has to implement its interface to be
-     * a class at all. A local call never reaches these -- the dispatcher hands over real objects --
-     * so what does not work yet is a call to another node, and it says so rather than failing
-     * somewhere further along.
+     * Generated here rather than done by the node because only this end knows what each parameter
+     * was declared as. The node holds a list of byte arrays and no idea what any of them mean.
      */
-    private fun buildNotGeneratedYet(table: IrClass, name: String, returnType: IrType) {
-        val function = table.addOverride(name, returnType)
-        function.addValueParameter("procedure", context.irBuiltIns.stringType)
-        when (name) {
-            "decodeArgs" -> {
-                function.addValueParameter("args", listType(context.irBuiltIns.byteArray.defaultType))
-                function.addValueParameter("format", symbols.wireFormat.defaultType)
-            }
-            else -> {
-                function.addValueParameter("value", context.irBuiltIns.anyNType)
-                function.addValueParameter("format", symbols.wireFormat.defaultType)
-            }
-        }
+    private fun buildDecodeArgs(table: IrClass, procedures: List<ProcedurePlan>) {
+        val decode = table.addOverride("decodeArgs", listType(context.irBuiltIns.anyNType))
+        val id = decode.addValueParameter("procedure", context.irBuiltIns.stringType)
+        val args = decode.addValueParameter("args", listType(context.irBuiltIns.byteArray.defaultType))
+        val format = decode.addValueParameter("format", symbols.wireFormat.defaultType)
 
-        function.body = DeclarationIrBuilder(context, function.symbol).irBlockBody {
-            +IrThrowImpl(
-                startOffset,
-                endOffset,
-                context.irBuiltIns.nothingType,
-                irCall(symbols.notGenerated).apply {
-                    arguments[0] = irString(table.name.asString())
-                    arguments[1] = irString(name)
-                },
-            )
+        decode.body = DeclarationIrBuilder(context, decode.symbol).irBlockBody {
+            procedures.forEach { procedure ->
+                +irIfThen(
+                    context.irBuiltIns.unitType,
+                    irEquals(irGet(id), irString(procedure.id)),
+                    irReturn(
+                        listOfValues(
+                            this@irBlockBody,
+                            context.irBuiltIns.anyNType,
+                            procedure.argumentTypes.mapIndexed { index, type ->
+                                irCall(symbols.decode).apply {
+                                    typeArguments[0] = type
+                                    arguments[0] = irGet(format)
+                                    arguments[1] = serializerFor(this@irBlockBody, type)
+                                    arguments[2] = elementAt(this@irBlockBody, args, index)
+                                }
+                            },
+                        )
+                    ),
+                )
+            }
+            +irReturn(listOfValues(this@irBlockBody, context.irBuiltIns.anyNType, emptyList()))
+        }
+    }
+
+    /** `encodeResult(procedure, value, format)`. Null for a body that gives nothing back. */
+    private fun buildEncodeResult(table: IrClass, procedures: List<ProcedurePlan>) {
+        val encode = table.addOverride(
+            "encodeResult",
+            context.irBuiltIns.byteArray.defaultType.makeNullable(),
+        )
+        val id = encode.addValueParameter("procedure", context.irBuiltIns.stringType)
+        val value = encode.addValueParameter("value", context.irBuiltIns.anyNType)
+        val format = encode.addValueParameter("format", symbols.wireFormat.defaultType)
+
+        encode.body = DeclarationIrBuilder(context, encode.symbol).irBlockBody {
+            procedures.forEach { procedure ->
+                val result = irIfThen(
+                    context.irBuiltIns.unitType,
+                    irEquals(irGet(id), irString(procedure.id)),
+                    // Unit is not encoded at all. There is nothing in it to carry, and a caller
+                    // that asked for nothing should not pay bytes to be told so.
+                    if (Serializers.isUnit(procedure.resultType)) {
+                        irReturn(irNull())
+                    } else {
+                        irReturn(
+                            irCall(symbols.encode).apply {
+                                typeArguments[0] = procedure.resultType
+                                arguments[0] = irGet(format)
+                                arguments[1] = serializerFor(this@irBlockBody, procedure.resultType)
+                                arguments[2] = irAs(irGet(value), procedure.resultType)
+                            }
+                        )
+                    },
+                )
+                +result
+            }
+            +irReturn(irNull())
         }
     }
 
@@ -348,6 +388,40 @@ internal class RpcTransformer(
             classifier,
             type,
         )
+    }
+
+    /**
+     * `serializer(T::class, emptyList(), false)`, cast to the serializer of that type.
+     *
+     * Whether a serializer exists was settled before anything was emitted; this is only how the
+     * generated code gets hold of it.
+     */
+    private fun serializerFor(builder: IrBuilderWithScope, type: IrType): IrExpression = with(builder) {
+        val lookup = irCall(symbols.serializerOf).apply {
+            arguments[0] = classReference(builder, type)
+            arguments[1] = irCall(symbols.emptyList).apply {
+                typeArguments[0] = symbols.kSerializer.starProjectedType
+            }
+            arguments[2] = irBoolean(false)
+        }
+        irAs(lookup, symbols.kSerializer.typeWith(type))
+    }
+
+    private fun listOfValues(
+        builder: IrBuilderWithScope,
+        elementType: IrType,
+        values: List<IrExpression>,
+    ): IrExpression = with(builder) {
+        irCall(symbols.listOf).apply {
+            typeArguments[0] = elementType
+            arguments[0] = IrVarargImpl(
+                startOffset,
+                endOffset,
+                context.irBuiltIns.arrayClass.typeWith(elementType),
+                elementType,
+                values,
+            )
+        }
     }
 
     private fun listType(elementType: IrType): IrType = context.irBuiltIns.listClass.typeWith(elementType)
