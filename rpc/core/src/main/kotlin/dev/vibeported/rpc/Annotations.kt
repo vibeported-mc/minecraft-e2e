@@ -21,12 +21,7 @@ package dev.vibeported.rpc
  * Source-retained: the compiler plugin reads it while rewriting, and nothing at runtime looks for
  * it -- by then the fact has been baked into which class the body ended up in.
  */
-// Fully qualified because this package declares its own `Target`, which shadows the annotation.
-@kotlin.annotation.Target(
-    AnnotationTarget.EXPRESSION,
-    AnnotationTarget.FILE,
-    AnnotationTarget.FUNCTION,
-)
+@Target(AnnotationTarget.EXPRESSION, AnnotationTarget.FILE, AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.SOURCE)
 public annotation class RpcRole(public val value: String)
 

@@ -11,7 +11,7 @@ package dev.vibeported.rpc
  *
  * The function's own body is never executed; [notApplied] is what it says when the plugin is missing.
  */
-@kotlin.annotation.Target(AnnotationTarget.FUNCTION)
+@Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.BINARY)
 public annotation class RpcEntryPoint
 
@@ -52,14 +52,14 @@ private fun notApplied(): Nothing = error(
  */
 
 @RpcEntryPoint
-public suspend fun <R> rpcCall(target: Target, body: suspend RpcScope.() -> R): R = notApplied()
+public suspend fun <R> rpcCall(target: RpcTarget, body: suspend RpcScope.() -> R): R = notApplied()
 
 @RpcEntryPoint
-public suspend fun <A1, R> rpcCall(target: Target, a1: A1, body: suspend RpcScope.(A1) -> R): R = notApplied()
+public suspend fun <A1, R> rpcCall(target: RpcTarget, a1: A1, body: suspend RpcScope.(A1) -> R): R = notApplied()
 
 @RpcEntryPoint
 public suspend fun <A1, A2, R> rpcCall(
-    target: Target,
+    target: RpcTarget,
     a1: A1,
     a2: A2,
     body: suspend RpcScope.(A1, A2) -> R,
@@ -67,7 +67,7 @@ public suspend fun <A1, A2, R> rpcCall(
 
 @RpcEntryPoint
 public suspend fun <A1, A2, A3, R> rpcCall(
-    target: Target,
+    target: RpcTarget,
     a1: A1,
     a2: A2,
     a3: A3,
@@ -77,14 +77,14 @@ public suspend fun <A1, A2, A3, R> rpcCall(
 /** Every matching node, in parallel, failing as soon as one of them does. */
 @RpcEntryPoint
 public suspend fun <R> forEachRpcCall(
-    target: Target,
+    target: RpcTarget,
     parallel: Boolean = true,
     body: suspend RpcScope.() -> R,
 ): Map<NodeId, R> = notApplied()
 
 @RpcEntryPoint
 public suspend fun <A1, R> forEachRpcCall(
-    target: Target,
+    target: RpcTarget,
     a1: A1,
     parallel: Boolean = true,
     body: suspend RpcScope.(A1) -> R,
@@ -93,14 +93,14 @@ public suspend fun <A1, R> forEachRpcCall(
 /** Every matching node, in parallel, each reporting for itself. */
 @RpcEntryPoint
 public suspend fun <R> forEachRpcCallCatching(
-    target: Target,
+    target: RpcTarget,
     parallel: Boolean = true,
     body: suspend RpcScope.() -> R,
 ): Map<NodeId, Result<R>> = notApplied()
 
 @RpcEntryPoint
 public suspend fun <A1, R> forEachRpcCallCatching(
-    target: Target,
+    target: RpcTarget,
     a1: A1,
     parallel: Boolean = true,
     body: suspend RpcScope.(A1) -> R,

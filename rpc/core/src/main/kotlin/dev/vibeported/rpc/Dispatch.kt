@@ -64,7 +64,7 @@ public suspend fun <R> dispatchTo(
 /** Resolves a target to exactly one node, or says which of "none" or "several" went wrong. */
 @PluginGenerated
 public suspend fun <R> dispatch(
-    target: Target,
+    target: RpcTarget,
     procedure: String,
     role: String?,
     args: List<Any?>,
@@ -91,7 +91,7 @@ public suspend fun <R> dispatch(
  */
 @PluginGenerated
 public suspend fun <R> dispatchEach(
-    target: Target,
+    target: RpcTarget,
     procedure: String,
     role: String?,
     args: List<Any?>,
@@ -123,7 +123,7 @@ public suspend fun <R> dispatchEach(
  */
 @PluginGenerated
 public suspend fun <R> dispatchEachCatching(
-    target: Target,
+    target: RpcTarget,
     procedure: String,
     role: String?,
     args: List<Any?>,
@@ -150,13 +150,13 @@ public suspend fun <R> dispatchEachCatching(
  * without it, so a fan-out that matched such a node would be asking for a failure the source already
  * knew about. Intersecting here means the mistake cannot be expressed rather than being caught late.
  */
-private suspend fun resolve(target: Target, role: String?): List<NodeId> {
+private suspend fun resolve(target: RpcTarget, role: String?): List<NodeId> {
     val node = currentNode()
     val required = role?.let(::Role)
 
     return when (target) {
-        is Target.Exactly -> listOf(target.id)
-        is Target.Where -> node.membership.snapshot()
+        is RpcTarget.Exactly -> listOf(target.id)
+        is RpcTarget.Where -> node.membership.snapshot()
             .filter { target.match(it) }
             .filter { required == null || required in it.roles }
             .map { it.id }
@@ -164,9 +164,9 @@ private suspend fun resolve(target: Target, role: String?): List<NodeId> {
     }
 }
 
-private fun describe(target: Target, role: String?): String = when (target) {
-    is Target.Exactly -> "It named ${target.id}, which is not in the membership."
-    is Target.Where -> "No node satisfied the predicate" +
+private fun describe(target: RpcTarget, role: String?): String = when (target) {
+    is RpcTarget.Exactly -> "It named ${target.id}, which is not in the membership."
+    is RpcTarget.Where -> "No node satisfied the predicate" +
         (role?.let { " and held role `$it`" } ?: "") + "."
 }
 
