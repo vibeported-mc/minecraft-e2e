@@ -30,7 +30,8 @@ because it is no longer nested in one.
 
 ## Ids
 
-An id is structural: suite, test, role and ordinal. It has to survive a rebuild on another machine,
+An id is lexical: the facade class, the declaration the call sits in, then a per-role ordinal in
+source order -- it says where a block was *written*. It has to survive a rebuild on another machine,
 because one process compiles the call site and another looks it up. That is why suite and test names
 must be compile-time constants -- they are part of the id.
 

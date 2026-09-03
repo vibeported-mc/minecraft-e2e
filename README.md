@@ -237,6 +237,10 @@ one.
 There are two tables per file, a server one and a client one. A dedicated server is dist-cleaned, so
 client classes are not on its classpath at all, and one table naming both would be a class it could
 not verify.
+
+That last paragraph is the seam where this design stopped generalising: `server` and `client` are
+baked into it. [`rpc/`](rpc/README.md) is the same idea with the game taken out and the roles opened
+up -- n of them, named at the call site. It is greenfield and nothing here is built on it yet.
 ## Blocks run on the game thread
 
 A block body is dispatched onto its process's event loop, so **every Minecraft call in it is safe
@@ -543,6 +547,7 @@ Each has a README of its own.
 | [`:gradle-plugin`](gradle-plugin/README.md) | An included build. Applies and configures everything, adds `runE2eTests` |
 | [`:capture`](capture/README.md) | FFmpeg cross-built for Windows, its Panama bindings, and the recorder that feeds NVENC |
 | [`:example`](example/README.md) | A consumer: a plugins block, an `mcE2E` block, and one suite |
+| [`rpc/`](rpc/README.md) | Eleven modules of multitier machinery that has never heard of Minecraft -- the generalisation of the lifting above |
 
 `:capture` carries a Docker step -- it cross-compiles FFmpeg and generates its own bindings -- but
 that is a task like any other, with the same inputs and up-to-date checks, so `gradlew build` drives
@@ -552,6 +557,21 @@ tree uses: the FFM API the bindings are made of only became final in 22, and the
 
 `:core` keeps its `protocol` package to itself. FancyModLoader builds a real module graph, and two
 jars cannot both export one package to it.
+
+## What `rpc/` is, and why there are two of these
+
+The harness lifts a lambda out of its call site and runs it in another process. That is a known
+thing with a name -- *multitier* programming, split at compile time -- and the version here is welded
+to this game: a closed `SERVER`/`CLIENT` enum, screenshots on the wire, a test framework's `runId` in
+the envelope.
+
+[`rpc/`](rpc/README.md) is that core extracted and generalised: open roles, serialization resolved at
+compile time rather than reflectively at run time, and a `checkNoGame` task that fails if any of its
+modules can so much as resolve a `net.minecraft` artifact. It has its own compiler plugin, its own
+Gradle plugin and its own tests, including three processes with three different classpaths.
+
+**The harness has not been migrated onto it.** Both exist; `:core` and `:dsl` still use the plugin
+described above. Porting is separate work.
 
 ## Not built yet
 
