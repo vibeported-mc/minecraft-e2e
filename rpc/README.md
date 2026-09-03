@@ -20,9 +20,7 @@ suspend fun doWork(): Int {
 }
 ```
 
-One function, three machines, read top to bottom. That file compiles and runs --
-[`OneFileTest.kt`](example/src/test/kotlin/dev/vibeported/rpc/example/OneFileTest.kt) is where it
-lives, and it asserts the 8.
+One function, three machines, read top to bottom.
 
 A body can also say *which kind of node* it needs, which is what makes a dist-cleaned game server
 survivable:
