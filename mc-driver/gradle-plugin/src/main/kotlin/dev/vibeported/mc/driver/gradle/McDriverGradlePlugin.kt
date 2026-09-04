@@ -170,6 +170,19 @@ public class McDriverGradlePlugin : Plugin<Project> {
         project.tasks.withType(Test::class.java).configureEach { task ->
             task.systemProperty("mcdriver.launch.plan", planFile.get().asFile.absolutePath)
             task.systemProperty("mcdriver.capture.dir", captureDir.absolutePath)
+
+            // Gradle turns assertions on for a test JVM; Minecraft has never run with them on, and
+            // neither has any mod. This JVM hosts the game rather than testing arithmetic, so it
+            // gets the JVM the game expects.
+            //
+            // Not a theoretical tidiness. With `-ea`, Create fails to load: Catnip writes
+            // `new BlockState(Blocks.AIR, null, null)` as an interface static, and vanilla's
+            // `StateHolder` constructor opens with `assert propertyKeys.length == ...`. Assertions
+            // off, that null is never read and the sentinel is fine. Assertions on, a mod that
+            // works everywhere else dies during registration, and what you get is
+            // `NullPointerException: Cannot read the array length because "propertyKeys" is null`
+            // out of a static initialiser, which says nothing at all about `-ea`.
+            task.enableAssertions = false
         }
     }
 
