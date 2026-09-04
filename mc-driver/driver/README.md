@@ -152,8 +152,9 @@ these run in the calling process.
 
 ## A hazard worth knowing
 
-Procedure ids have no package in them — `PlayerKt.teleport/0` — so this module and `:dsl`, which it
-replaces, must never share a classpath. They do not, and nothing enforces it.
+Procedure ids have no package in them — `PlayerKt.teleport/0` — so two modules that both define a
+`PlayerKt.teleport` cannot share a classpath; `ProcedureManifest.load` refuses the duplicate. Nothing
+enforces it, and it is the thing to remember before copying this module rather than depending on it.
 
 ## Proof that it works
 

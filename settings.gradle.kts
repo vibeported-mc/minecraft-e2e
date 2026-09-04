@@ -1,18 +1,11 @@
 pluginManagement {
-    // The Gradle plugin is an included build so this very build can apply it by id, rather than
-    // duplicating the Minecraft run wiring for the sake of dogfooding it.
-    includeBuild("gradle-plugin")
-
-    // And the RPC one, for the same reason: a plugin cannot be applied by the build that declares
-    // it. Unlike its neighbour it names nothing but the Kotlin Gradle plugin, so it cannot repeat
-    // the second-ModDevGradle-copy collision that broke IDE import.
-    // Renamed, because Gradle takes an included build's path from its directory name and there is
-    // already a `gradle-plugin` above.
+    // Both Gradle plugins are included builds, so this very build can apply them by id rather than
+    // duplicating their wiring for the sake of dogfooding it. Gradle takes an included build's name
+    // from its directory, and both are called `gradle-plugin`, so both are renamed.
     includeBuild("rpc/gradle-plugin") { name = "rpc-gradle-plugin" }
 
-    // And the driver's, which configures the ModDevGradle a consuming build applied: it declares
-    // the game runs, harvests how ModDevGradle would launch them, and points a run at the launcher.
-    // Renamed for the same reason as its neighbour above.
+    // The driver's configures the ModDevGradle a consuming build applied: it declares the game
+    // runs, harvests how ModDevGradle would launch them, and hangs the test task off that.
     includeBuild("mc-driver/gradle-plugin") { name = "mc-driver-gradle-plugin" }
 
     repositories {
@@ -40,14 +33,6 @@ dependencyResolutionManagement {
 rootProject.name = "minecraft-e2e"
 
 include(
-    ":minecraft",
-
-    ":dsl",
-    ":suite",
-    ":orchestrator",
-    ":codegen",
-    ":example",
-
     // The driver. One mod that puts an RPC node in a game and exposes methods for driving it, a
     // launcher that starts a JVM inside a prepared NeoForge environment, and a smoke run that uses
     // both. Tools only -- none of it knows anything about tests, reports or logging.
@@ -81,5 +66,4 @@ include(
     // API only became final in 22; capture/build.gradle.kts sets that for itself.
     ":capture:libav-gen",
     ":capture:libav",
-    ":capture:example",
 )
