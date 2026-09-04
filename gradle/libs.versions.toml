@@ -10,6 +10,12 @@ junit = "5.11.4"
 minecraft = "26.2"
 neoforge = "26.2.0.69"
 moddev = "2.0.144"
+
+# What the launcher compiles against, and only that: `Entrypoint` to extend and `Dist` to name.
+# Both are on a NeoForge run's classpath already, so they are `compileOnly` there -- which is what
+# lets the launcher be a plain Java project rather than another ModDevGradle one.
+fancymodloader = "11.0.16"
+mergetool = "2.0.7"
 kff = "6.3.0"
 
 [libraries]
@@ -27,6 +33,9 @@ serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbo
 kctfork-core = { module = "dev.zacsweers.kctfork:core", version.ref = "kctfork" }
 
 kotlinforforge = { module = "thedarkcolour:kotlinforforge-neoforge", version.ref = "kff" }
+
+fml-loader = { module = "net.neoforged.fancymodloader:loader", version.ref = "fancymodloader" }
+fml-distmarker = { module = "net.neoforged:mergetool", version.ref = "mergetool" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.4" }

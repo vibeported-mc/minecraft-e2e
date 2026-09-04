@@ -12,7 +12,6 @@ import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.NbtIo
 import net.minecraft.nbt.NbtOps
 import net.minecraft.nbt.Tag
-import net.minecraft.world.item.ItemStack
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -83,15 +82,13 @@ public open class MojangCodecSerializer<T : Any>(
 public object BlockPosSerializer :
     MojangCodecSerializer<BlockPos>("net.minecraft.core.BlockPos", BlockPos.CODEC)
 
-/**
- * A stack, for putting one somewhere and for reading back what is there.
+/*
+ * There is deliberately no `ItemStack` serializer.
  *
- * Encoded against plain NBT rather than against a registry-aware view of it, which decides what can
- * cross: the item, the count, and any component whose own codec needs nothing looked up. A component
- * referring to a data-driven registry -- enchantments are the one to expect -- fails at the encode
- * with the codec's own message rather than arriving wrong. Nothing needs it yet, and inventing a
- * process-wide registry handle to support it would be a worse thing to own than a clear error.
+ * Not because one cannot be written -- `ItemStack.CODEC` is right there -- but because a driver
+ * could never make one to send. A stack's components are bound while a server loads its resources,
+ * and a driver process runs no game: constructing `ItemStack(Items.DIAMOND_SWORD)` there throws
+ * `NullPointerException: Components not bound yet` from inside `Item.components()`, long before
+ * anything is encoded. So an item crosses as text and is built where the registries exist, exactly
+ * as a block is. @see parseItem
  */
-@RpcSerializer(ItemStack::class)
-public object ItemStackSerializer :
-    MojangCodecSerializer<ItemStack>("net.minecraft.world.item.ItemStack", ItemStack.CODEC)

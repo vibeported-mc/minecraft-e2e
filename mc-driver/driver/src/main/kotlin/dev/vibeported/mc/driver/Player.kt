@@ -3,7 +3,6 @@ package dev.vibeported.mc.driver
 import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
-import net.minecraft.world.item.ItemStack
 
 /*
  * Free methods, every one of them written as a `server { }` or a `client { }`.
@@ -109,14 +108,17 @@ public suspend fun isAlive(player: String): Boolean =
  *
  * How the world gets arranged before it is exercised: giving a client something to drag is setup,
  * and doing it here keeps it out of whatever is being driven.
+ *
+ * The item is text, exactly as a block is -- `"minecraft:diamond_sword"`, or the same with
+ * `[minecraft:damage=10]` -- and it is built on the server. @see parseItem for why it has to be.
  */
-public suspend fun giveItem(client: String, slot: InventorySlot, stack: ItemStack) {
+public suspend fun giveItem(client: String, slot: InventorySlot, item: String, count: Int = 1) {
     require(slot.isInPlayerInventory) {
         "$slot belongs to an open menu rather than to the player, so nothing can be put in it here"
     }
-    server(client, slot.inventoryIndex, stack) { name, index, item ->
+    server(client, slot.inventoryIndex, item, count) { name, index, description, howMany ->
         val player = minecraftServer.playerNamed(name)
-        player.inventory.setItem(index, item)
+        player.inventory.setItem(index, minecraftServer.parseItem(description, howMany))
         // The client is told about its own inventory on the next broadcast, and anything that then
         // drags the stack has to see it there first.
         player.inventoryMenu.broadcastChanges()

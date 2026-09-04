@@ -20,7 +20,7 @@ import sys
 
 MAX_ARITY = 5
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "driver/src/main/kotlin/dev/vibeported/mc/driver/Calls.kt"
+OUT = ROOT / "mc-driver/driver/src/main/kotlin/dev/vibeported/mc/driver/Calls.kt"
 
 HEADER = '''package dev.vibeported.mc.driver
 

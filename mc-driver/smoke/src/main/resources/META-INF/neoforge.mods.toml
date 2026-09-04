@@ -1,0 +1,16 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "mcdriver_smoke"
+version = "0.1.0"
+displayName = "Driver smoke"
+description = '''Drives a real server and client through the driver, to prove the mod, the mixins and the input gate actually install.'''
+
+[[dependencies.mcdriver_smoke]]
+modId = "mcdriver"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"

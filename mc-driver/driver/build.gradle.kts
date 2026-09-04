@@ -43,6 +43,13 @@ dependencies {
 
     // Screen recording. Its jar carries the FFmpeg DLLs inside it and unpacks them on first use.
     implementation(project(":capture:libav"))
+
+    // Reading the launch plan the Gradle plugin wrote.
+    implementation(libs.serialization.json)
+
+    // The star's middle. A driver holds the hub, so it needs the socket transport rather than just
+    // the client side of it.
+    api(project(":rpc:transport"))
 }
 
 neoForge {

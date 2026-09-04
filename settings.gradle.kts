@@ -10,6 +10,11 @@ pluginManagement {
     // already a `gradle-plugin` above.
     includeBuild("rpc/gradle-plugin") { name = "rpc-gradle-plugin" }
 
+    // And the driver's, which configures the ModDevGradle a consuming build applied: it declares
+    // the game runs, harvests how ModDevGradle would launch them, and points a run at the launcher.
+    // Renamed for the same reason as its neighbour above.
+    includeBuild("mc-driver/gradle-plugin") { name = "mc-driver-gradle-plugin" }
+
     repositories {
         gradlePluginPortal()
         mavenCentral()
@@ -37,14 +42,18 @@ rootProject.name = "minecraft-e2e"
 include(
     ":minecraft",
 
-    // The driver: one mod that puts an RPC node in a game and exposes methods for driving it.
-    // Tools only -- it knows nothing about tests, reports or logging.
-    ":driver",
     ":dsl",
     ":suite",
     ":orchestrator",
     ":codegen",
     ":example",
+
+    // The driver. One mod that puts an RPC node in a game and exposes methods for driving it, a
+    // launcher that starts a JVM inside a prepared NeoForge environment, and a smoke run that uses
+    // both. Tools only -- none of it knows anything about tests, reports or logging.
+    ":mc-driver:driver",
+    ":mc-driver:launcher",
+    ":mc-driver:smoke",
 
     // The RPC framework the harness is built on, and which knows nothing about Minecraft. Kept in
     // this build for the shared catalog and conventions; kept free of the game by never applying
