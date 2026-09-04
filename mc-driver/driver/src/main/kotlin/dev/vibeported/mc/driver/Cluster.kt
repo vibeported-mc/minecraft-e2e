@@ -5,16 +5,18 @@ import dev.vibeported.rpc.host.HubAddress
 import dev.vibeported.rpc.host.RpcConnection
 import dev.vibeported.rpc.host.RpcHost
 import dev.vibeported.rpc.transport.SocketHub
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import net.minecraft.SharedConstants
 import net.minecraft.server.Bootstrap
 import java.io.File
-import kotlin.coroutines.coroutineContext
 
 /** The node this process joins as: it holds the middle of the star and runs no game. */
 public const val DRIVER_NODE: String = "driver"
@@ -56,12 +58,95 @@ public interface ClusterScope {
 }
 
 /**
- * Runs [body] with a hub, a node, and games it can start.
+ * A cluster that is open until somebody closes it.
  *
- * This process becomes the middle of the star: it listens on a free port, joins its own cluster
- * under [DRIVER_NODE], and tells every game it starts where to dial. It claims no role, so it
- * resolves no procedure tables and can run none of the bodies it dispatches -- which is exactly what
- * a driver is.
+ * The form [cluster] is built out of, and the one anything outliving a single lambda needs -- a test
+ * framework, most obviously, which has to open the games once and hand them to many tests before
+ * closing them at the end of a run.
+ *
+ * Prefer [cluster] where a lambda will do. This is the shape for when it will not.
+ */
+public class Cluster private constructor(
+    private val socket: SocketHub,
+    private val scope: CoroutineScope,
+    private val connection: RpcConnection,
+    private val games: Games,
+) : ClusterScope by games, AutoCloseable {
+
+    /**
+     * Stops every game, leaves the cluster and closes the hub.
+     *
+     * Idempotent, because the two callers -- a `use` block and a test framework's teardown -- can
+     * both plausibly fire.
+     */
+    override fun close() {
+        if (closed) return
+        closed = true
+        games.stopAll()
+        runCatching { runBlocking { connection.leave() } }
+        scope.cancel()
+        runCatching { runBlocking { socket.stop() } }
+    }
+
+    private var closed = false
+
+    public companion object {
+
+        /**
+         * Opens one, and leaves it open.
+         *
+         * This process becomes the middle of the star: it listens on a free port, joins its own
+         * cluster under [DRIVER_NODE], and tells every game it starts where to dial. It claims no
+         * role, so it resolves no procedure tables and can run none of the bodies it dispatches --
+         * which is exactly what a driver is.
+         */
+        public suspend fun open(
+            plan: LaunchPlan = LaunchPlan.read(),
+            logDir: File = defaultLogDir(),
+        ): Cluster {
+            // Before anything else, and it is not optional when this is a plain `main`. A process
+            // running no game has filled no registries, and the moment anything names an item to
+            // send one, `Items` initialises against an empty registry and throws -- as an
+            // `ExceptionInInitializerError` with no message and a stack in `<clinit>`, which says
+            // nothing whatsoever about registries. Under JUnit, NeoForge's own `JUnitMain` has
+            // already done this; both calls are idempotent, so it costs nothing to say it twice.
+            SharedConstants.tryDetectVersion()
+            Bootstrap.bootStrap()
+
+            // Its own scope rather than the caller's, because this outlives the call that made it.
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("mcdriver"))
+            val socket = SocketHub(0)
+
+            try {
+                socket.start(scope)
+                val address = HubAddress("127.0.0.1", socket.port)
+                println("mcdriver: hub listening on ${address.port}")
+
+                val connection = RpcHost(
+                    id = NodeId(DRIVER_NODE),
+                    // No roles, so no tables. This process holds the jar every body was compiled
+                    // into and can run not one of them, which is the point: it dispatches.
+                    roles = emptySet(),
+                    // Load-bearing, and its absence is baffling. FancyModLoader loads mod classes
+                    // in a transforming loader of its own; resolving through any other gets a
+                    // *second* copy of every class, and a value handed across then fails to match a
+                    // type it plainly is -- with an error naming the very type it says is missing.
+                    loader = ClusterScope::class.java.classLoader,
+                ).connect(scope, address)
+
+                return Cluster(socket, scope, connection, Games(plan, address, logDir, connection))
+            } catch (failure: Throwable) {
+                // A half-opened cluster still holds a port and possibly a coroutine or two.
+                scope.cancel()
+                runCatching { socket.stop() }
+                throw failure
+            }
+        }
+    }
+}
+
+/**
+ * Runs [body] with a hub, a node, and games it can start.
  *
  * ```kotlin
  * cluster {
@@ -75,59 +160,18 @@ public interface ClusterScope {
  *
  * Everything is torn down on the way out, including when [body] throws. A game process outlives its
  * parent quite happily, and one left behind holds port 25565 and answers for a run that no longer
- * exists -- so the next run talks to it.
+ * exists -- so the next run talks to it. @see Cluster.open for the form that stays open.
  */
 public suspend fun <R> cluster(
     plan: LaunchPlan = LaunchPlan.read(),
     logDir: File = defaultLogDir(),
     body: suspend ClusterScope.() -> R,
-): R {
-    // Before anything else, and it is not optional. This process runs no game, so nothing has
-    // filled the registries -- and the moment a caller writes `ItemStack(Items.DIAMOND_SWORD)` to
-    // send one, `Items` initialises against an empty registry and throws. What comes out is an
-    // `ExceptionInInitializerError` with no message and a stack in `<clinit>`, which says nothing
-    // whatsoever about registries. Both calls are idempotent, so a driver that happens to be inside
-    // a game pays nothing.
-    SharedConstants.tryDetectVersion()
-    Bootstrap.bootStrap()
-
-    val hub = SocketHub(0)
-    val scope = CoroutineScope(coroutineContext + SupervisorJob())
-
-    return try {
-        hub.start(scope)
-        val address = HubAddress("127.0.0.1", hub.port)
-        println("mcdriver: hub listening on ${address.port}")
-
-        val connection = RpcHost(
-            id = NodeId(DRIVER_NODE),
-            // No roles, so no tables. This process holds the jar every body was compiled into and
-            // can run not one of them, which is the point: it dispatches.
-            roles = emptySet(),
-            // Load-bearing, and its absence is baffling. FancyModLoader loads mod classes in a
-            // transforming loader of its own; resolving through any other gets a *second* copy of
-            // every class, and a value handed across then fails to match a type it plainly is --
-            // with an error naming the very type it says is missing.
-            loader = ClusterScope::class.java.classLoader,
-        ).connect(scope, address)
-
-        val games = Games(plan, address, logDir, connection)
-        try {
-            games.body()
-        } finally {
-            games.stopAll()
-            runCatching { connection.leave() }
-            scope.cancel()
-        }
-    } finally {
-        hub.stop()
-    }
-}
+): R = Cluster.open(plan, logDir).use { it.body() }
 
 /** Beside the captures when the driver was told where those go, and under the working directory otherwise. */
-private fun defaultLogDir(): File = File(captureDirectory() ?: File("."), "logs")
+internal fun defaultLogDir(): File = File(captureDirectory() ?: File("."), "logs")
 
-private class Games(
+internal class Games(
     private val plan: LaunchPlan,
     private val address: HubAddress,
     private val logDir: File,

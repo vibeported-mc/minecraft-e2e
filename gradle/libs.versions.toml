@@ -38,6 +38,7 @@ fml-loader = { module = "net.neoforged.fancymodloader:loader", version.ref = "fa
 fml-distmarker = { module = "net.neoforged:mergetool", version.ref = "mergetool" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.4" }
 
 [plugins]

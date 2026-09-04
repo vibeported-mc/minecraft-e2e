@@ -38,6 +38,11 @@ dependencies {
     implementation(project(":mc-driver:driver"))
     implementation(libs.coroutines.core)
     implementation(libs.kotlinforforge)
+
+    // The JUnit integration, which hands a test its cluster. The Jupiter engine and the platform
+    // launcher come from the root build; `junit-fml` is added to `testRuntimeOnly` by ModDevGradle
+    // when `unitTest` is enabled, which the driver plugin does.
+    testImplementation(project(":mc-driver:junit"))
 }
 
 neoForge {

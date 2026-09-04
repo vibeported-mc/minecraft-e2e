@@ -114,8 +114,9 @@ nothing, which is what lets the jar sit in an ordinary development client.
 ## The methods
 
 **The cluster** — `cluster { }`, whose receiver has `startServer`, `startClient`, `startClients`,
-`deadProcess` and `hub`. The one scope here that is not a lifted body's receiver: spawning a JVM is
-not something a game can be asked to do, so these run in the calling process.
+`deadProcess` and `hub`, and `Cluster.open()` for when it has to outlive a lambda. The one scope here
+that is not a lifted body's receiver: spawning a JVM is not something a game can be asked to do, so
+these run in the calling process.
 
 **Players and movement** — `waitForPlayer`, `teleport`, `lookAt`, `lookAtPlayer`, `allowFlight`,
 `awaitDeath`, `positionOf`, `isAlive`, `giveItem`.
@@ -156,5 +157,6 @@ replaces, must never share a classpath. They do not, and nothing enforces it.
 
 ## Proof that it works
 
-[`:mc-driver:smoke`](../smoke) drives a real server and a real client through every verb above and
-says which ones worked. `gradlew :mc-driver:smoke:runDriver`.
+[`:mc-driver:smoke`](../smoke) drives a real server and a real client through every verb above, as
+ordinary JUnit tests: `gradlew :mc-driver:smoke:test`. [`:mc-driver:junit`](../junit) is what hands
+one of those tests a cluster.

@@ -1,0 +1,25 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+# A mod, though it has no @Mod class and adds nothing to a game.
+#
+# It is one so that FancyModLoader loads these classes in its transforming class loader, beside the
+# driver and beside the tests -- and that is not a nicety. An extension loaded anywhere else names a
+# `ClusterScope` that is a *different class* from the one in the test's own signature, so Jupiter
+# reports that no resolver supports the parameter while having registered one that does.
+#
+# Only ever on a test classpath, so no game run has heard of it.
+
+[[mods]]
+modId = "mcdriver_junit"
+version = "0.1.0"
+displayName = "Minecraft driver JUnit"
+description = '''Hands a running cluster to a JUnit test.'''
+
+[[dependencies.mcdriver_junit]]
+modId = "mcdriver"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"

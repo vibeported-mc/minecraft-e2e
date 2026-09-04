@@ -53,6 +53,7 @@ include(
     // both. Tools only -- none of it knows anything about tests, reports or logging.
     ":mc-driver:driver",
     ":mc-driver:launcher",
+    ":mc-driver:junit",
     ":mc-driver:smoke",
 
     // The RPC framework the harness is built on, and which knows nothing about Minecraft. Kept in

@@ -1,5 +1,6 @@
 package dev.vibeported.mc.driver.gradle
 
+import net.neoforged.moddevgradle.dsl.ModModel
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
@@ -28,8 +29,23 @@ public abstract class McDriverExtension {
      */
     public abstract val sourceSet: Property<SourceSet>
 
-    /** The class whose `main(String[])` runs once the loader is up. @see runDriver */
+    /**
+     * The class whose `main(String[])` runs once the loader is up.
+     *
+     * Optional. A build that only writes tests needs no main at all, and leaving this unset simply
+     * means no `driverMain` run and no `runDriver` task.
+     */
     public abstract val mainClass: Property<String>
+
+    /**
+     * The mod the tests belong to.
+     *
+     * Defaults to the project's single declared mod, which is the usual case. It matters more than
+     * it looks: the tested mod is what puts the test output on `-Dfml.modFolders`, and test classes
+     * that are not in a mod load outside FancyModLoader's class loader -- where every Minecraft type
+     * they name is a second copy of itself.
+     */
+    public abstract val testedMod: Property<ModModel>
 
     /**
      * Which dist the driver process itself prepares.
