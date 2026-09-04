@@ -4,7 +4,6 @@ import net.neoforged.moddevgradle.dsl.ModModel
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
-import org.gradle.api.tasks.SourceSet
 
 /**
  * What a build tells the driver about the games it wants driven.
@@ -22,12 +21,19 @@ import org.gradle.api.tasks.SourceSet
 public abstract class McDriverExtension {
 
     /**
-     * The source set whose runtime classpath the games are launched from.
+     * The mod this build produces, created for you.
      *
-     * It has to be one source set for all three runs: the driver mod is a dependency of whatever
-     * this build writes, and FancyModLoader only finds it as a mod if its jar is on that classpath.
+     * Saying it here rather than in `neoForge { mods { } }` is the difference between naming the mod
+     * once and naming it three times -- the id, the source set it is built from, and the source set
+     * the games are launched from were all the same two facts written out twice.
+     *
+     * It has to match the `modId` in this project's `neoforge.mods.toml`, which is the one place a
+     * build still says it: that file carries things a plugin has no business generating, mixin
+     * configurations among them.
+     *
+     * A build that declares its own mods can leave this unset and name one with [testedMod].
      */
-    public abstract val sourceSet: Property<SourceSet>
+    public abstract val modId: Property<String>
 
     /**
      * The class whose `main(String[])` runs once the loader is up.

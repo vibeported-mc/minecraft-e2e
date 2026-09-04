@@ -71,10 +71,7 @@ public class McDriverGradlePlugin : Plugin<Project> {
         }
 
         val neoForge = project.extensions.getByType(NeoForgeExtension::class.java)
-        val sources = settings.sourceSet.orNull ?: error(
-            "mcDriver { sourceSet = ... } says which source set the mod is built from. " +
-                "It is usually `sourceSets.main.get()`."
-        )
+        val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
 
         // The games are launched from the *test* classpath, not the mod's own, and that is not an
         // accident. A body written inside a test -- `server { ... }` in an `@Test` method -- is
@@ -82,8 +79,13 @@ public class McDriverGradlePlugin : Plugin<Project> {
         // to resolve that table. Launch from `main` and every such call comes back as "no procedure
         // ... on any classpath here", which is true and says nothing about why. The test classpath
         // contains main's, so nothing is lost by taking the wider one.
-        val runSources = project.extensions.getByType(SourceSetContainer::class.java)
-            .findByName(SourceSet.TEST_SOURCE_SET_NAME) ?: sources
+        val runSources = sourceSets.getByName(SourceSet.TEST_SOURCE_SET_NAME)
+
+        // Declared here when the build named an id, so that the mod, the source set it is built
+        // from and the source set the games run off are one statement rather than three.
+        settings.modId.orNull?.takeIf { it.isNotBlank() }?.let { id ->
+            neoForge.mods.maybeCreate(id).sourceSet(sourceSets.getByName(SourceSet.MAIN_SOURCE_SET_NAME))
+        }
         val mainClass = settings.mainClass.orNull?.takeIf { it.isNotBlank() }
 
         // The launcher boots the loader and is then loaded through it, so it belongs on the same
@@ -156,12 +158,15 @@ public class McDriverGradlePlugin : Plugin<Project> {
         // instead of the transforming one, and every Minecraft type they name is a second copy of
         // itself. That failure reads as a class not matching a type it plainly is. So it is worked
         // out here, and said plainly when it cannot be.
-        val tested = settings.testedMod.orNull ?: neoForge.mods.singleOrNull() ?: error(
-            "mcDriver { testedMod = ... } says which mod the tests belong to. This project declares " +
-                neoForge.mods.map { it.name } + ", so the driver cannot choose for you. Without it, " +
-                "test classes load outside FancyModLoader's class loader and every Minecraft type " +
-                "they name is a second copy of itself."
-        )
+        val tested = settings.testedMod.orNull
+            ?: settings.modId.orNull?.let { neoForge.mods.findByName(it) }
+            ?: neoForge.mods.singleOrNull()
+            ?: error(
+                "mcDriver { modId = ... } names the mod the tests belong to. This project declares " +
+                    neoForge.mods.map { it.name } + ", so the driver cannot choose for you. Without " +
+                    "it, test classes load outside FancyModLoader's class loader and every Minecraft " +
+                    "type they name is a second copy of itself."
+            )
 
         neoForge.unitTest { unitTest ->
             unitTest.enable()

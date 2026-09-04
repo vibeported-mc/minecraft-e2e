@@ -39,22 +39,19 @@ dependencies {
     implementation(libs.coroutines.core)
     implementation(libs.kotlinforforge)
 
-    // The JUnit integration, which hands a test its cluster. The Jupiter engine and the platform
-    // launcher come from the root build; `junit-fml` is added to `testRuntimeOnly` by ModDevGradle
-    // when `unitTest` is enabled, which the driver plugin does.
     testImplementation(project(":mc-driver:junit"))
 }
 
 neoForge {
     version = libs.versions.neoforge.get()
-
-    mods {
-        create("mcdriver_smoke") { sourceSet(sourceSets.main.get()) }
-    }
 }
 
+// The mod is declared here rather than in `neoForge { mods { } }`: the driver plugin creates it,
+// wires the source sets the games and the tests are built from, and makes it the mod under test.
+// The id has to match `src/main/resources/META-INF/neoforge.mods.toml`, which stays hand-written
+// because it carries things a plugin has no business generating.
 mcDriver {
-    sourceSet = sourceSets.main.get()
+    modId = "mcdriver_smoke"
     mainClass = "dev.vibeported.mc.driver.smoke.Smoke"
     captureDir = layout.buildDirectory.dir("smoke")
 }

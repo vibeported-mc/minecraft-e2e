@@ -57,13 +57,23 @@ dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
     mcDriverLauncher(project(":mc-driver:launcher"))
     implementation(project(":mc-driver:driver"))
+    testImplementation(project(":mc-driver:junit"))
 }
 
+neoForge { version = "…" }
+
 mcDriver {
-    sourceSet = sourceSets.main.get()
-    mainClass = "com.example.Smoke"
+    modId = "example"        // matches META-INF/neoforge.mods.toml
+    mainClass = "com.example.Smoke"   // optional: only for the launcher path
 }
 ```
+
+`mcDriver` declares the mod for you -- there is no `neoForge { mods { } }` block, because the id and
+the two source sets involved were the same two facts written out three times. What it is responsible
+for is four things, and the runs are only one of them: the `driverServer` and `driverClient` runs
+(**declared to be read, never started** -- a Minecraft command line cannot be reconstructed by hand),
+the harvest that turns them into a launch plan, seeding the server directory so an unattended server
+will start at all, and the whole `gradlew test` wiring.
 
 The driver plugin *configures* ModDevGradle rather than applying it. Applying it from an included
 build would load a second copy of MDG beside the one every other module uses, and two copies both
