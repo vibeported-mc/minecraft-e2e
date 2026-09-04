@@ -1,28 +1,27 @@
 # `mc-driver`
 
-Driving a real Minecraft server and client from another process, with four projects and no test
-framework anywhere in them.
+Driving a real Minecraft server and client from an ordinary `gradlew test`, with no test framework
+of its own anywhere in it.
 
 | | |
 |---|---|
 | [`driver`](driver/README.md) | The mod. An rpc node inside a running game, ~40 methods for driving it, and `cluster { }` to start the games in the first place |
-| `gradle-plugin` | Declares the game runs, records how ModDevGradle would launch them, and points a run at the launcher. An included build |
-| `launcher` | One Java class. Starts FancyModLoader, then runs somebody's `main` instead of a game |
-| `junit` | Hands a running cluster to a JUnit test. A mod, for a reason worth reading below |
-| `smoke` | A real server, a real client, and every verb tried once -- as `gradlew test` |
+| `gradle-plugin` | Two game runs, a task that reads them, and the wiring that hangs off both. An included build |
+| [`junit`](junit/README.md) | Hands a running cluster to a JUnit test. A mod, for a reason worth reading below |
+| `smoke` | A real server, a real client, and every verb tried once |
+| `launcher` | Starts FancyModLoader and runs a plain `main` instead of a game. **Currently wired to nothing** -- see the note at the end |
 
 ## How a run happens
 
 ```
-gradlew :mc-driver:smoke:runDriver
+gradlew :mc-driver:smoke:test
    |
    +-- harvestDriverLaunchPlan   reads the two ModDevGradle run tasks -> launch-plan.json
    +-- seedDriverRunDirs         eula, server.properties, and last run's world deleted
-   +-- runDriverMain             a NeoForge run whose main class is `Launch`
+   +-- test                      ModDevGradle's JUnit environment: junit-fml boots
+          |                      FancyModLoader before JUnit discovers anything
           |
-          +-- Launch             starts FancyModLoader, hands over to Smoke.main
-                 |
-                 +-- cluster { } holds the hub, spawns the server and the clients,
+          +-- cluster { }        holds the hub, spawns the server and the clients,
                                  tells each one `-Drpc.hub=127.0.0.1:<port>`
 ```
 
@@ -37,8 +36,8 @@ the driver replays it, once per game, with a username and a game directory of it
 none -- but to *name* its types: to encode a `BlockPos`, resolve a procedure table, hold a serializer
 for a game class. FancyModLoader hands mod classes to a transforming loader of its own, and resolving
 them through any other gets a second copy of every one; a value handed across then fails to match a
-type it plainly is, with an error naming that very type. `launcher` is how a plain `main` gets to run
-in there.
+type it plainly is, with an error naming that very type. ModDevGradle's `unitTest { }` is how the
+test JVM gets in there.
 
 **The driver holds the hub.** It listens on a free port, joins its own cluster as `driver` with no
 roles at all -- so it resolves no tables and can run none of the bodies it dispatches -- and tells
@@ -55,25 +54,28 @@ plugins {
 
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
-    mcDriverLauncher(project(":mc-driver:launcher"))
     implementation(project(":mc-driver:driver"))
     testImplementation(project(":mc-driver:junit"))
 }
 
-neoForge { version = "…" }
+neoForge {
+    version = "…"
+    mods { create("example") { sourceSet(sourceSets.main.get()) } }
+    unitTest { enable(); testedMod = mods.getByName("example") }
 
-mcDriver {
-    modId = "example"        // matches META-INF/neoforge.mods.toml
-    mainClass = "com.example.Smoke"   // optional: only for the launcher path
+    mcDriver { }   // optional; every setting has a default
 }
 ```
 
-`mcDriver` declares the mod for you -- there is no `neoForge { mods { } }` block, because the id and
-the two source sets involved were the same two facts written out three times. What it is responsible
-for is four things, and the runs are only one of them: the `driverServer` and `driverClient` runs
-(**declared to be read, never started** -- a Minecraft command line cannot be reconstructed by hand),
-the harvest that turns them into a launch plan, seeding the server directory so an unattended server
-will start at all, and the whole `gradlew test` wiring.
+**`mcDriver` is settings only.** It declares no mod, enables no testing and creates nothing. The mod
+and the JUnit environment are the build's own statements to ModDevGradle, and the driver plugin
+*reads* them -- it notices `unitTest` is on by the task ModDevGradle registers for it, and does
+nothing at all if it is not. That way there is one place a mod is declared, not two that must agree.
+
+What the plugin is responsible for is four things, and the runs are only one: the `driverServer` and
+`driverClient` runs (**declared to be read, never started** -- a Minecraft command line cannot be
+reconstructed by hand), the harvest that turns them into a launch plan, seeding the server directory
+so an unattended server will start at all, and hanging the `test` task off both.
 
 The driver plugin *configures* ModDevGradle rather than applying it. Applying it from an included
 build would load a second copy of MDG beside the one every other module uses, and two copies both
@@ -107,7 +109,8 @@ mod. A consuming build says nothing about any of it.
 
 **The cluster is shared by the whole run**, because a client takes the better part of a minute to
 reach a world. `startServer` and `startClient` are idempotent, so every test asks for what it needs
-and only the first one pays. A class that cannot share says `@OwnCluster` and gets games of its own.
+and only the first one pays. There is no per-class option: the server port and game directories are
+fixed, so two clusters at once would mean two servers on port 25565.
 The price is the ordinary price of shared state: `ScreenTest` has to close the screen it opened,
 because the inventory key toggles and the next test would otherwise wait forever for a screen it had
 just closed.
@@ -142,10 +145,14 @@ hook feeding the encoder, a value surviving the trip -- every one of which fails
 of them ends in a real H.264 recording, which is the only way to find out that the `GameRenderer`
 mixin is in place.
 
-`gradlew :mc-driver:smoke:runDriver` is the other entry point: a plain `main` through the launcher,
-kept because that path also installs itself silently and would rot unnoticed.
-
 The suite has earned its keep three times over. It found that a driver process must bootstrap the
 game registries before it can name anything; that it cannot construct an `ItemStack` at all, which is
 why items are text; and that a procedure written inside a test is on no classpath the *games* hold
 unless the test output is part of the mod they load.
+
+## A loose end
+
+`launcher` is a working FancyModLoader entrypoint that runs a plain `main` in a prepared environment,
+and since the tests took over, nothing wires it. It is not reachable from the Gradle plugin any more
+either -- `mainClass` and the `driverMain` run went with it. Keep it for the first thing that wants a
+`main` rather than a test, or delete it; what it should not do is sit here half-connected.

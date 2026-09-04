@@ -31,8 +31,14 @@ Two declarations and a mod metadata file.
 **One cluster for the whole run, by default.** A client takes the better part of a minute to reach a
 world, so a suite booting one per class would spend its life booting games. The cluster is kept in
 JUnit's root store and closed when the run ends; `startServer` and `startClient` are idempotent, so
-every test asks for what it needs and only the first pays. `@OwnCluster` on a class gives it games of
-its own, closed with the class, for the rare test that cannot leave the world as it found it.
+every test asks for what it needs and only the first pays.
+
+There is deliberately no per-class option. One was written and taken out again: the server port and
+the game directories come fixed from the launch plan and the seeding task, so a second cluster alive
+beside the first would put two dedicated servers on port 25565 -- which presents as "the server
+process exited before joining the cluster" and names a port conflict nowhere. Isolating a class
+properly means a cluster owning its own port and directories, and that is worth building when
+something needs it, with a test that proves two can coexist.
 
 The price of sharing is the ordinary price of shared state, and it is worth knowing before it bites:
 a test that opens a screen has to close it, because the inventory key toggles and the next test would

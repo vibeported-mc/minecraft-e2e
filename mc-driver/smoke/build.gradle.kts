@@ -33,8 +33,6 @@ repositories {
 
 dependencies {
     rpcCompilerPlugin(project(":rpc:compiler-plugin"))
-    mcDriverLauncher(project(":mc-driver:launcher"))
-
     implementation(project(":mc-driver:driver"))
     implementation(libs.coroutines.core)
     implementation(libs.kotlinforforge)
@@ -44,14 +42,17 @@ dependencies {
 
 neoForge {
     version = libs.versions.neoforge.get()
-}
 
-// The mod is declared here rather than in `neoForge { mods { } }`: the driver plugin creates it,
-// wires the source sets the games and the tests are built from, and makes it the mod under test.
-// The id has to match `src/main/resources/META-INF/neoforge.mods.toml`, which stays hand-written
-// because it carries things a plugin has no business generating.
-mcDriver {
-    modId = "mcdriver_smoke"
-    mainClass = "dev.vibeported.mc.driver.smoke.Smoke"
-    captureDir = layout.buildDirectory.dir("smoke")
+    mods {
+        create("mcdriver_smoke") { sourceSet(sourceSets.main.get()) }
+    }
+
+    unitTest {
+        enable()
+        testedMod = mods.getByName("mcdriver_smoke")
+    }
+
+    mcDriver {
+        captureDir = layout.buildDirectory.dir("smoke")
+    }
 }

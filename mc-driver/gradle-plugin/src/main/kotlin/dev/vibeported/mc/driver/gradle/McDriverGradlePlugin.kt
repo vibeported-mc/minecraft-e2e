@@ -3,6 +3,7 @@ package dev.vibeported.mc.driver.gradle
 import net.neoforged.moddevgradle.dsl.NeoForgeExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.file.Directory
 import org.gradle.api.file.RegularFile
 import org.gradle.api.provider.Provider
@@ -13,20 +14,24 @@ import org.gradle.api.tasks.testing.Test
 import java.io.File
 
 /**
- * Everything a build needs to drive a real NeoForge server and client.
+ * Two game runs, a task that reads them, and the wiring that hangs off both.
  *
- * Three runs and two tasks. The server and client runs exist to be *harvested* rather than started
- * by Gradle -- the driver starts them itself, as many clients as it likes, each with its own
- * username and game directory -- and the third run is the driver, launched through
- * `dev.vibeported.mc.driver.launcher.Launch` so that it comes up inside a prepared NeoForge
- * environment with no game in it.
+ * The `driverServer` and `driverClient` runs exist to be **harvested rather than started**: a
+ * Minecraft command line cannot be reconstructed by hand, so `harvestDriverLaunchPlan` reads them
+ * and writes down how ModDevGradle would have launched one. The driver replays that, as many clients
+ * as it likes, each with its own username and game directory.
  *
- * A consuming build is a plugins block and an `mcDriver { }` naming two things:
+ * Everything else here is a dependency between tasks. It declares nothing on the build's behalf: the
+ * mod, and whether there are unit tests at all, are the build's own statements in `neoForge { }`, and
+ * this reads them.
  *
  * ```kotlin
- * mcDriver {
- *     sourceSet = sourceSets.main.get()
- *     mainClass = "com.example.Smoke"
+ * neoForge {
+ *     version = "…"
+ *     mods { create("example") { sourceSet(sourceSets.main.get()) } }
+ *     unitTest { enable(); testedMod = mods.getByName("example") }
+ *
+ *     mcDriver { tileWindows = true }   // optional; every setting has a default
  * }
  * ```
  *
@@ -37,29 +42,40 @@ import java.io.File
 public class McDriverGradlePlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
-        val settings = project.extensions.create("mcDriver", McDriverExtension::class.java).apply {
-            dist.convention("DEDICATED_SERVER")
-            serverAddress.convention("localhost:25565")
-            clientWidth.convention(1280)
-            clientHeight.convention(720)
-            tileWindows.convention(false)
-            captureDir.convention(project.layout.buildDirectory.dir("mcdriver"))
-            javaVersion.convention(25)
+        // Applied by the consuming build, not from here, and deliberately so. This plugin lives in
+        // an included build, so applying ModDevGradle from it would load a second copy beside the
+        // one every other module uses -- and two copies both apply `gradle-idea-ext` to the root
+        // project, colliding on the `settings` extension during an IDE import with an error that
+        // names neither plugin.
+        project.afterEvaluate {
+            require(it.plugins.hasPlugin(MODDEV)) {
+                "The driver plugin configures ModDevGradle rather than applying it, so a build " +
+                    "using it needs `id(\"$MODDEV\")` in its own plugins block."
+            }
         }
 
-        // The launcher jar. It has to be on the run's classpath and it is not a mod -- `Launch` runs
-        // before the transforming loader exists -- so it goes on as an ordinary runtime dependency.
-        project.configurations.create(LAUNCHER) {
-            it.isCanBeConsumed = false
-            it.isCanBeResolved = true
-            it.description = "The FancyModLoader entrypoint the driver run is started through."
-        }
+        project.plugins.withId(MODDEV) {
+            val neoForge = project.extensions.getByType(NeoForgeExtension::class.java)
 
-        // The source set and the main class are only known once the build script has run.
-        project.afterEvaluate { configure(it, settings) }
+            // Nested inside `neoForge`, because that is what it configures. An extension created
+            // through `ExtensionContainer.create` is decorated and so is itself `ExtensionAware`,
+            // which is what makes a block inside a block possible at all.
+            val settings = (neoForge as ExtensionAware).extensions
+                .create("mcDriver", McDriverExtension::class.java).apply {
+                    serverAddress.convention("localhost:25565")
+                    clientWidth.convention(1280)
+                    clientHeight.convention(720)
+                    tileWindows.convention(false)
+                    captureDir.convention(project.layout.buildDirectory.dir("mcdriver"))
+                }
+
+            // The mods, the runs and whether testing is on are only settled once the build script
+            // has run.
+            project.afterEvaluate { configure(it, neoForge, settings) }
+        }
     }
 
-    private fun configure(project: Project, settings: McDriverExtension) {
+    private fun configure(project: Project, neoForge: NeoForgeExtension, settings: McDriverExtension) {
         // Applied by the consuming build, not from here, and deliberately so. This plugin lives in
         // an included build, so applying ModDevGradle from it would load a second copy beside the
         // one every other module uses -- and two copies both apply `gradle-idea-ext` to the root
@@ -70,29 +86,22 @@ public class McDriverGradlePlugin : Plugin<Project> {
                 "it needs `id(\"net.neoforged.moddev\")` in its own plugins block."
         }
 
-        val neoForge = project.extensions.getByType(NeoForgeExtension::class.java)
         val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
 
-        // The games are launched from the *test* classpath, not the mod's own, and that is not an
+        // Whether the build turned ModDevGradle's unit testing on. `configureTesting` registers this
+        // task and nothing else does, so asking for it answers the question exactly -- and asking is
+        // the point: the driver does not enable testing on a build's behalf, it notices.
+        val testing = project.tasks.findByName(MDG_PREPARE_TEST) != null
+
+        // The games are launched from the *test* classpath when there is one, and that is not an
         // accident. A body written inside a test -- `server { ... }` in an `@Test` method -- is
         // lifted into a table compiled with the tests, and the game asked to run it has to be able
         // to resolve that table. Launch from `main` and every such call comes back as "no procedure
         // ... on any classpath here", which is true and says nothing about why. The test classpath
-        // contains main's, so nothing is lost by taking the wider one.
-        val runSources = sourceSets.getByName(SourceSet.TEST_SOURCE_SET_NAME)
-
-        // Declared here when the build named an id, so that the mod, the source set it is built
-        // from and the source set the games run off are one statement rather than three.
-        settings.modId.orNull?.takeIf { it.isNotBlank() }?.let { id ->
-            neoForge.mods.maybeCreate(id).sourceSet(sourceSets.getByName(SourceSet.MAIN_SOURCE_SET_NAME))
-        }
-        val mainClass = settings.mainClass.orNull?.takeIf { it.isNotBlank() }
-
-        // The launcher boots the loader and is then loaded through it, so it belongs on the same
-        // runtime classpath as everything else rather than off to one side.
-        project.configurations.named(runSources.runtimeOnlyConfigurationName).configure {
-            it.extendsFrom(project.configurations.getByName(LAUNCHER))
-        }
+        // contains main's, so nothing is lost by taking the wider one when it is modded at all.
+        val runSources = sourceSets.getByName(
+            if (testing) SourceSet.TEST_SOURCE_SET_NAME else SourceSet.MAIN_SOURCE_SET_NAME
+        )
 
         val planFile = project.layout.buildDirectory.file("mcdriver/launch-plan.json")
         val captureDir = settings.captureDir.get().asFile
@@ -114,98 +123,53 @@ public class McDriverGradlePlugin : Plugin<Project> {
             run.programArguments.addAll("--quickPlayMultiplayer", settings.serverAddress.get())
         }
 
-        if (mainClass != null) createDriverRun(project, settings, neoForge, runSources, mainClass, planFile, captureDir)
-
-        configureTesting(project, settings, neoForge, planFile, captureDir)
+        if (testing) configureTesting(project, neoForge, sourceSets, planFile, captureDir)
 
         val harvest = registerHarvest(project, settings, runSources, planFile)
         val seed = registerSeed(project, settings, serverRunDir)
 
-        if (mainClass != null) {
-            project.tasks.named(runTaskName(DRIVER_RUN)).configure { it.dependsOn(harvest, seed) }
-            project.tasks.register("runDriver") { task ->
-                task.group = GROUP
-                task.description = "Runs $mainClass.main inside a prepared NeoForge environment, with a cluster it can start."
-                task.dependsOn(project.tasks.named(runTaskName(DRIVER_RUN)))
-            }
-        }
-
-        project.tasks.withType(Test::class.java).configureEach { it.dependsOn(harvest, seed) }
+        if (testing) project.tasks.withType(Test::class.java).configureEach { it.dependsOn(harvest, seed) }
     }
 
     /**
-     * Runs `gradlew test` inside a prepared NeoForge environment.
+     * Hangs the driver off ModDevGradle's JUnit environment, when a build asked for one.
      *
-     * Almost none of this is ours. ModDevGradle already knows how to host JUnit in a modded
-     * environment -- `unitTest { }` puts NeoForge's `junit-fml` on the test runtime classpath, and
-     * that is a `LauncherSessionListener` which boots FancyModLoader and swaps the thread context
-     * classloader to the transforming one *before* JUnit discovers anything. So the test classes,
-     * and every Minecraft class they name, resolve exactly as the game's do. It even writes IntelliJ
-     * run-configuration defaults, so the green arrow beside a test works.
+     * Almost none of this is ours. `unitTest { enable() }` -- which the *build* writes, not this --
+     * puts NeoForge's `junit-fml` on the test runtime classpath, and that is a
+     * `LauncherSessionListener` which boots FancyModLoader and swaps the thread context classloader
+     * to the transforming one *before* JUnit discovers anything. So the test classes, and every
+     * Minecraft class they name, resolve exactly as the game's do.
      *
-     * What is added here is the three things a driver needs on top: where the launch plan is, where
-     * captures go, and the extension that hands a test its cluster.
+     * What is added here is the two things a driver needs on top: the test output being part of the
+     * mod the *games* load, and knowing where the launch plan and the captures are.
      */
     private fun configureTesting(
         project: Project,
-        settings: McDriverExtension,
         neoForge: NeoForgeExtension,
+        sourceSets: SourceSetContainer,
         planFile: Provider<RegularFile>,
         captureDir: File,
     ) {
-        // Load-bearing, and MDG does not enforce it: with no tested mod the test output never
-        // reaches `-Dfml.modFolders`, the test classes load on the Gradle worker's classloader
-        // instead of the transforming one, and every Minecraft type they name is a second copy of
-        // itself. That failure reads as a class not matching a type it plainly is. So it is worked
-        // out here, and said plainly when it cannot be.
-        val tested = settings.testedMod.orNull
-            ?: settings.modId.orNull?.let { neoForge.mods.findByName(it) }
-            ?: neoForge.mods.singleOrNull()
-            ?: error(
-                "mcDriver { modId = ... } names the mod the tests belong to. This project declares " +
-                    neoForge.mods.map { it.name } + ", so the driver cannot choose for you. Without " +
-                    "it, test classes load outside FancyModLoader's class loader and every Minecraft " +
-                    "type they name is a second copy of itself."
-            )
-
-        neoForge.unitTest { unitTest ->
-            unitTest.enable()
-            unitTest.testedMod.set(tested)
-        }
+        // ModDevGradle does not enforce this, and the failure when it is missing is baffling: with no
+        // tested mod the test output never reaches `-Dfml.modFolders`, the test classes load on the
+        // Gradle worker's classloader instead of the transforming one, and every Minecraft type they
+        // name is a second copy of itself. What that reads like is a class not matching a type it
+        // plainly is. Said plainly here instead.
+        val tested = neoForge.unitTest.testedMod.orNull ?: error(
+            "neoForge { unitTest { testedMod = ... } } says which mod the tests belong to, and the " +
+                "driver needs it as much as ModDevGradle does. Without it, test classes load " +
+                "outside FancyModLoader's class loader and every Minecraft type they name is a " +
+                "second copy of itself."
+        )
 
         // And the test output becomes part of that mod for the game runs as well. ModDevGradle adds
         // it for the JUnit run alone, which leaves the server and the client holding a jar whose
         // procedure tables they cannot see.
-        project.extensions.getByType(SourceSetContainer::class.java)
-            .findByName(SourceSet.TEST_SOURCE_SET_NAME)
-            ?.let { tests -> tested.sourceSet(tests) }
+        sourceSets.findByName(SourceSet.TEST_SOURCE_SET_NAME)?.let { tests -> tested.sourceSet(tests) }
 
         project.tasks.withType(Test::class.java).configureEach { task ->
             task.systemProperty("mcdriver.launch.plan", planFile.get().asFile.absolutePath)
             task.systemProperty("mcdriver.capture.dir", captureDir.absolutePath)
-        }
-    }
-
-    private fun createDriverRun(
-        project: Project,
-        settings: McDriverExtension,
-        neoForge: NeoForgeExtension,
-        runSources: SourceSet,
-        mainClass: String,
-        planFile: Provider<RegularFile>,
-        captureDir: File,
-    ) {
-        neoForge.runs.create(DRIVER_RUN) { run ->
-            // A server run for the dist the loader has to prepare, and then the launcher instead of
-            // Minecraft: no world is ever created here, because nothing calls the game's own main.
-            run.server()
-            run.sourceSet.set(runSources)
-            run.gameDirectory.set(project.layout.projectDirectory.dir("run/driver"))
-            run.mainClass.set(LAUNCHER_MAIN)
-            run.jvmArgument("-Dmcdriver.launch.main=$mainClass")
-            run.jvmArgument("-Dmcdriver.launch.dist=${settings.dist.get()}")
-            run.jvmArgument("-Dmcdriver.launch.plan=${planFile.get().asFile.absolutePath}")
-            run.jvmArgument("-Dmcdriver.capture.dir=${captureDir.absolutePath}")
         }
     }
 
@@ -292,14 +256,13 @@ public class McDriverGradlePlugin : Plugin<Project> {
     private companion object {
         const val GROUP = "mcdriver"
 
-        /** Where a build says which launcher jar to use. */
-        const val LAUNCHER = "mcDriverLauncher"
+        const val MODDEV = "net.neoforged.moddev"
 
-        const val LAUNCHER_MAIN = "dev.vibeported.mc.driver.launcher.Launch"
+        /** Registered by ModDevGradle's `unitTest { enable() }`, and by nothing else. */
+        const val MDG_PREPARE_TEST = "prepareNeoForgeTestFiles"
 
         const val SERVER_RUN = "driverServer"
         const val CLIENT_RUN = "driverClient"
-        const val DRIVER_RUN = "driverMain"
 
         const val HARVEST = "harvestDriverLaunchPlan"
         const val SEED = "seedDriverRunDirs"
